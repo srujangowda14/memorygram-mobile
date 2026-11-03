@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Memorygram", "slug": "memorygram", "scheme": "memorygram",
+    "version": "1.0.0", "orientation": "portrait",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.memorygram.app", "usesAppleSignIn": true },
+    "android": { "package": "com.memorygram.app", "adaptiveIcon": { "backgroundColor": "#F9F7F1" } },
+    "plugins": ["expo-router", "expo-image-picker", "expo-apple-authentication"],
+    "experiments": { "typedRoutes": true }
+  }
+}
