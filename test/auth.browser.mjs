@@ -54,6 +54,7 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
   });
   await page.goto(app);
   await page.getByText('Peek at the demo first').click();
+  await checkSharedProfile(page);
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByText('Guest preview', { exact: true }).waitFor();
   await page.getByText('Exit preview', { exact: true }).click();
@@ -73,3 +74,34 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
   assert.deepEqual(providers, ['apple', 'google', 'google']);
   assert.equal(exchanges, 1);
 });
+
+// Walk through the actual guest UI with a local sample photo. Verify the
+// same caption appears on both participants' profiles after posting once.
+async function checkSharedProfile(page) {
+  const button = label => page.getByRole('button', { name: label, exact: true });
+  await button('Profile').click();
+  await button('Requests').click();
+  await button('Approve').click();
+  await button('3 followers').waitFor();
+  await button('Profile settings').click();
+  await page.getByLabel('Private profile', { exact: true }).click();
+  await page.getByText('Close', { exact: true }).click();
+  await page.getByText('Public profile', { exact: false }).first().waitFor();
+  await button('Create memory').click();
+  await page.getByLabel('Memory caption').fill('Our tiny photo museum');
+  const filePicker = page.waitForEvent('filechooser');
+  await button('Add photo proof').click();
+  await (await filePicker).setFiles({ name: 'museum.png', mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1kAAAAASUVORK5CYII=', 'base64') });
+  await button('Change photo').waitFor();
+  await button('Choose friends').click();
+  await page.getByRole('checkbox', { name: /Alex Chen/ }).click();
+  await button('Done choosing').click();
+  await page.getByLabel('Group name').fill('Museum crew');
+  await button('Post memory').click();
+  await page.getByText('Our tiny photo museum', { exact: true }).waitFor();
+  await button('Alex Chen').first().click();
+  await button('← My profile').waitFor();
+  await page.getByText('Our tiny photo museum', { exact: true }).waitFor();
+  await button('The hangout').click();
+}
