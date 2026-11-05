@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Alert, FlatList, Image, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
+import * as Apple from 'expo-apple-authentication';
+import type { Session } from '@supabase/supabase-js';
+import { signIn, type Provider } from '@/lib/auth';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 
@@ -18,36 +19,137 @@ const starter: Memory[] = [
   { id:'1', caption:'We took the long way home.', quest:'Take the scenic wrong turn', author:'Alex & Sam', votes:5, image:'https://images.unsplash.com/photo-1472396961693-142e6e269027?w=700' },
   { id:'2', caption:'Michelin stars? Absolutely none.', quest:'Kitchen chaos', author:'The whole crew', votes:8, image:'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=700' },
 ];
+// Restore the Supabase session before showing private UI.
+// Preview runs in a separately keyed tree so its state cannot cross accounts.
 export default function Home() {
-  const [signedIn, setSignedIn] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [ready, setReady] = useState(!supabase);
+  const [preview, setPreview] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next);
+      if (next || event === 'SIGNED_OUT') setPreview(false);
+      setReady(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  if (!ready) return <SafeAreaView style={s.safe}><ActivityIndicator accessibilityLabel="Restoring session" /></SafeAreaView>;
+  if (!session && !preview) return <Welcome onPreview={() => setPreview(true)} />;
+  return <Hangout key={session?.user.id ?? 'preview'} session={session} exitPreview={() => setPreview(false)} />;
+}
+
+// Show the existing scrapbook experience for the current account or guest.
+// The account menu exposes the signed-in identity and device-local sign-out.
+function Hangout({ session, exitPreview }: { session: Session | null; exitPreview: () => void }) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const account = session?.user.email || (session ? 'Signed-in member' : 'Guest preview');
+
+  // Sign out this device through Supabase, or leave the local preview.
+  // Retain the account view on failure so the user can retry.
+  async function leave() {
+    if (!session) return exitPreview();
+    if (!supabase || leaving) return;
+    setLeaving(true);
+    setAccountError('');
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+    } catch {
+      setAccountError('Could not sign out. Check your connection and try again.');
+    } finally {
+      setLeaving(false);
+    }
+  }
   const [tab, setTab] = useState<'home'|'quests'|'scrapbook'>('home'); const [memories, setMemories] = useState(starter);
   const [filters, setFilters] = useState({ inside:false, quick:false }); const [selected, setSelected] = useState<Quest | null>(null); const [caption,setCaption]=useState(''); const [photo,setPhoto]=useState<string|undefined>();
-  useEffect(() => { supabase.auth.getSession().then(({data}) => setSignedIn(!!data.session)); }, []);
-  async function signIn(provider: 'google'|'apple') {
-    const redirectTo=Linking.createURL('/');
-    const {data,error}=await supabase.auth.signInWithOAuth({ provider, options:{redirectTo,skipBrowserRedirect:true} });
-    if(error || !data.url) return Alert.alert('Sign in unavailable', error?.message || 'Add your Supabase settings first.');
-    const result=await WebBrowser.openAuthSessionAsync(data.url,redirectTo);
-    if(result.type==='success' && result.url) { const params=new URL(result.url).hash.slice(1); const token=new URLSearchParams(params).get('access_token'); const refresh=new URLSearchParams(params).get('refresh_token'); if(token&&refresh) { await supabase.auth.setSession({access_token:token,refresh_token:refresh}); setSignedIn(true); } }
-  }
-  if (!signedIn) return <Welcome onSignIn={signIn} onPreview={()=>setSignedIn(true)}/>;
   const visible = quests.filter(q => (!filters.inside || q.place==='indoors') && (!filters.quick || q.minutes<=5));
   async function choosePhoto() { const p = await ImagePicker.requestMediaLibraryPermissionsAsync(); if (!p.granted) return Alert.alert('Photo permission needed', 'Memorygram needs a photo to make a memory.'); const result=await ImagePicker.launchImageLibraryAsync({ mediaTypes:['images'], quality:.75 }); if(!result.canceled) setPhoto(result.assets[0].uri); }
   function submit() { if(!caption.trim() || !photo) return Alert.alert('Almost there', 'Add a tiny caption and photo proof.'); setMemories([{ id:Date.now().toString(), caption, quest:selected!.title, author:'You', image:photo, votes:0 },...memories]); setSelected(null);setCaption('');setPhoto(undefined);setTab('scrapbook'); }
   return <SafeAreaView style={s.safe}><View style={s.app}>
-    <View style={s.header}><View><Text style={s.wordmark}><Text style={s.mark}>✳</Text> memorygram<Text style={{color:'#ED7041'}}>.</Text></Text><Text style={s.group}>✌️ THE USUAL SUSPECTS</Text></View><Pressable style={s.avatar}><Text>JD</Text></Pressable></View>
+    <View style={s.header}><View><Text style={s.wordmark}><Text style={s.mark}>✳</Text> memorygram<Text style={{color:'#ED7041'}}>.</Text></Text><Text style={s.group}>✌️ THE USUAL SUSPECTS · DEMO GROUP</Text></View>
+      <Pressable accessibilityLabel="Account" accessibilityRole="button" style={s.avatar} onPress={() => setAccountOpen(true)}>
+        <Ionicons name="person-outline" size={20} />
+      </Pressable>
+    </View>
+    <Modal visible={accountOpen} transparent animationType="fade" onRequestClose={() => setAccountOpen(false)}>
+      <View style={s.modalBg}><View style={s.modal}>
+        <Text style={s.kicker}>ACCOUNT</Text><Text style={s.modalTitle}>{account}</Text>
+        {!!accountError && <Text accessibilityRole="alert" style={s.sub}>{accountError}</Text>}
+        <View style={s.modalActions}>
+          <Pressable onPress={() => setAccountOpen(false)}><Text style={s.later}>Close</Text></Pressable>
+          <Pressable style={s.submit} disabled={leaving} onPress={leave}>
+            <Text style={s.submitText}>{session ? (leaving ? 'Signing out…' : 'Sign out') : 'Exit preview'}</Text>
+          </Pressable>
+        </View>
+      </View></View>
+    </Modal>
     {tab==='home' && <ScrollView contentContainerStyle={s.scroll}><Text style={s.kicker}>YOUR PEOPLE. YOUR STORIES.</Text><Text style={s.title}>Life’s better with a{`\n`}<Text style={s.script}>side quest.</Text></Text><Text style={s.sub}>A little less scrolling. A few more “you had to be there” moments.</Text>
       <View style={s.hero}><Text style={s.heroKicker}>✦ THIS WEEK’S GROUP QUEST</Text><Text style={s.heroTitle}>Make an ordinary Tuesday{`\n`}a story worth telling.</Text><Text style={s.heroText}>Recreate an iconic album cover. With your people.</Text><Pressable style={s.darkButton} onPress={()=>setSelected(quests[0])}><Text style={s.darkButtonText}>Make a memory  ↗</Text></Pressable><Text style={s.heroArt}>📸</Text></View>
       <View style={s.stats}><Stat icon="⚑" value={`${12+memories.length-2}`} label="QUESTS CONQUERED"/><Stat icon="▧" value={`${28+memories.length-2}`} label="MEMORIES MADE"/><Stat icon="✧" value="LEVEL 3" label="MEMORY MAKERS"/></View>
       <Section title="Your next “remember when”" action="See all" onAction={()=>setTab('quests')}/><QuestRow quest={visible[0]} onPress={setSelected}/><QuestRow quest={visible[1]} onPress={setSelected}/>
       <Section title="A few pages from our story" action="Scrapbook" onAction={()=>setTab('scrapbook')}/><MemoryCard memory={memories[0]} compact/></ScrollView>}
     {tab==='quests' && <View style={{flex:1}}><View style={s.pageHead}><Text style={s.pageTitle}>Quest board</Text><Text style={s.sub}>Tiny missions. Big evidence.</Text><View style={s.filterRow}><Filter label="Indoors" active={filters.inside} onPress={()=>setFilters({...filters,inside:!filters.inside})}/><Filter label="5 min" active={filters.quick} onPress={()=>setFilters({...filters,quick:!filters.quick})}/><View style={s.free}><Text style={s.freeText}>◉ Always $0</Text></View></View></View><FlatList data={visible} contentContainerStyle={s.list} renderItem={({item})=><QuestRow quest={item} onPress={setSelected}/>} keyExtractor={q=>q.id}/></View>}
-    {tab==='scrapbook' && <FlatList data={memories} contentContainerStyle={s.list} ListHeaderComponent={<View style={s.pageHead}><Text style={s.pageTitle}>Our scrapbook</Text><Text style={s.sub}>Proof that the little things were the big things.</Text></View>} renderItem={({item})=><MemoryCard memory={item}/>} keyExtractor={m=>m.id}/>} />
+    {tab==='scrapbook' && <FlatList data={memories} contentContainerStyle={s.list} ListHeaderComponent={<View style={s.pageHead}><Text style={s.pageTitle}>Our scrapbook</Text><Text style={s.sub}>Proof that the little things were the big things.</Text></View>} renderItem={({item})=><MemoryCard memory={item}/>} keyExtractor={m=>m.id}/>}
     <View style={s.nav}>{([['home','home-outline','The hangout'],['quests','flag-outline','Quests'],['scrapbook','images-outline','Scrapbook']] as const).map(([key,icon,label])=><Pressable key={key} style={s.navItem} onPress={()=>setTab(key)}><Ionicons name={icon as any} size={22} color={tab===key?'#D9683D':'#8C9086'}/><Text style={[s.navLabel,tab===key&&s.active]}>{label}</Text></Pressable>)}</View>
     <Modal visible={!!selected} animationType="slide" transparent><View style={s.modalBg}><View style={s.modal}><Text style={s.kicker}>YOUR NEXT LITTLE ADVENTURE</Text><Text style={s.modalTitle}>{selected?.title}</Text><Text style={s.sub}>{selected?.prompt}</Text><Text style={s.meta}>◷ {selected?.minutes} min   ◉ $0   ⌂ {selected?.place}</Text><TextInput style={s.input} multiline placeholder="The story behind the chaos…" value={caption} onChangeText={setCaption}/><Pressable style={s.photoButton} onPress={choosePhoto}>{photo?<Image source={{uri:photo}} style={s.preview}/>:<><Ionicons name="camera-outline" size={25} color="#69755B"/><Text style={s.photoText}>Add photo proof</Text></>}</Pressable><View style={s.modalActions}><Pressable onPress={()=>setSelected(null)}><Text style={s.later}>Maybe later</Text></Pressable><Pressable style={s.submit} onPress={submit}><Text style={s.submitText}>Submit memory ↗</Text></Pressable></View></View></View></Modal>
   </View></SafeAreaView>;
 }
-function Welcome({onSignIn,onPreview}:{onSignIn:(p:'google'|'apple')=>void;onPreview:()=>void}) { return <SafeAreaView style={s.safe}><View style={s.welcome}><Text style={s.welcomeMark}>✳</Text><Text style={s.welcomeName}>memorygram<Text style={{color:'#ED7041'}}>.</Text></Text><Text style={s.welcomeTitle}>Make a little{`\n`}mischief.</Text><Text style={s.welcomeText}>Side quests for your favorite people. Photo proof required.</Text><View style={s.welcomeArt}><Text style={{fontSize:75}}>📸</Text><Text style={s.tapeText}>the usual suspects ♡</Text></View><Pressable style={s.oauth} onPress={()=>onSignIn('google')}><Ionicons name="logo-google" size={18}/><Text style={s.oauthText}>Continue with Google</Text></Pressable><Pressable style={s.oauth} onPress={()=>onSignIn('apple')}><Ionicons name="logo-apple" size={20}/><Text style={s.oauthText}>Continue with Apple</Text></Pressable><Pressable onPress={onPreview}><Text style={s.previewLink}>Peek at the demo first</Text></Pressable><Text style={s.privacy}>By continuing, you’re agreeing to make more stories.</Text></View></SafeAreaView> }
+// Offer provider sign-in when configured and keep guest preview available.
+// Wait for the session subscription to admit the user after provider success.
+function Welcome({ onPreview }: { onPreview: () => void }) {
+  const busy = useRef(false);
+  const [pending, setPending] = useState<Provider | null>(null);
+  const [message, setMessage] = useState('');
+  const disabled = !supabase || pending !== null;
+
+  // Serialize button presses so a second login cannot replace the first verifier.
+  // Treat device cancellation as a normal return to the welcome screen.
+  async function start(provider: Provider) {
+    if (!supabase || busy.current) return;
+    busy.current = true;
+    setPending(provider);
+    setMessage('');
+    try {
+      await signIn(provider);
+    } catch (error) {
+      if ((error as { code?: string })?.code !== 'ERR_REQUEST_CANCELED') {
+        setMessage('Sign-in could not be completed. Check your connection and try again.');
+      }
+    } finally {
+      busy.current = false;
+      setPending(null);
+    }
+  }
+
+  return <SafeAreaView style={s.safe}><ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+    <View style={s.welcome}>
+      <Text style={s.welcomeMark}>✳</Text><Text style={s.welcomeName}>memorygram.</Text>
+      <Text style={s.welcomeTitle}>Make a little mischief.</Text>
+      <Text style={s.welcomeText}>Side quests for your favorite people. Photo proof required.</Text>
+      <View style={s.welcomeArt}><Text style={{fontSize:75}}>📸</Text></View>
+      <Pressable accessibilityRole="button" disabled={disabled} style={s.oauth} onPress={() => start('google')}>
+        <Ionicons name="logo-google" size={18}/><Text style={s.oauthText}>Continue with Google</Text>
+      </Pressable>
+      {Platform.OS === 'ios' && supabase ? <View pointerEvents={disabled ? 'none' : 'auto'} style={{width:'100%', maxWidth:340}}>
+        <Apple.AppleAuthenticationButton
+          buttonType={Apple.AppleAuthenticationButtonType.CONTINUE}
+          buttonStyle={Apple.AppleAuthenticationButtonStyle.BLACK}
+          cornerRadius={10} style={{ height: 51 }} onPress={() => start('apple')} />
+      </View> : <Pressable accessibilityRole="button" disabled={disabled} style={s.oauth} onPress={() => start('apple')}>
+        <Ionicons name="logo-apple" size={20}/><Text style={s.oauthText}>Continue with Apple</Text>
+      </Pressable>}
+      {pending && <ActivityIndicator accessibilityLabel="Signing in" />}
+      {!!message && <Text accessibilityRole="alert" style={s.welcomeText}>{message}</Text>}
+      {!supabase && <Text style={s.welcomeText}>Connect Supabase to enable sign-in. Guest preview is available.</Text>}
+      <Pressable disabled={!!pending} onPress={onPreview}><Text style={s.previewLink}>Peek at the demo first</Text></Pressable>
+    </View>
+  </ScrollView></SafeAreaView>;
+}
 function Stat({icon,value,label}:{icon:string,value:string,label:string}){return <View style={s.stat}><Text style={s.statIcon}>{icon}</Text><View><Text style={s.statValue}>{value}</Text><Text style={s.statLabel}>{label}</Text></View></View>}
 function Section({title,action,onAction}:{title:string;action:string;onAction:()=>void}){return <View style={s.section}><Text style={s.sectionTitle}>{title}</Text><Pressable onPress={onAction}><Text style={s.action}>{action} ↗</Text></Pressable></View>}
 function Filter({label,active,onPress}:{label:string;active:boolean;onPress:()=>void}){return <Pressable onPress={onPress} style={[s.filter,active&&s.filterOn]}><Text style={[s.filterText,active&&s.filterTextOn]}>{label}</Text></Pressable>}
