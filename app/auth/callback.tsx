@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Button, Text, View } from 'react-native';
 import { completeOAuth } from '../../lib/auth';
+import { consumeMemory } from '../../lib/memory-links';
 
 // Handle a provider return on the web or when the OS reopens the native app.
 // Replace the callback route once the session is stored, keeping codes out of history.
@@ -15,7 +16,11 @@ export default function Callback() {
       return;
     }
     completeOAuth(code, typeof flowId === 'string' ? flowId : undefined)
-      .then(() => { if (active) router.replace('/'); })
+      .then(async () => {
+        if (!active) return;
+        const memory = await consumeMemory();
+        if (active) router.replace(memory ? { pathname: '/', params: { memory } } : '/');
+      })
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [code, error, flowId]);

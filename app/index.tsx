@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { connectedSocial, previewSocial } from '@/lib/social';
-import { Action, MemoryFeed, Profile } from '@/lib/profile-ui';
+import { router, useLocalSearchParams } from 'expo-router';
+import { connectedSocial, previewSocial, SAMPLE_IDS } from '@/lib/social';
+import { Action, HomeTimeline, MemoryFeed, Profile, SharedMemory } from '@/lib/profile-ui';
+import { rememberMemory, validMemoryId } from '@/lib/memory-links';
 import { MemoryComposer } from '@/lib/memory-composer';
 import * as Apple from 'expo-apple-authentication';
 import type { Session } from '@supabase/supabase-js';
@@ -19,6 +21,9 @@ const quests: Quest[] = [
 // Restore the Supabase session before showing private UI.
 // Preview runs in a separately keyed tree so its state cannot cross accounts.
 export default function Home() {
+  const params = useLocalSearchParams<{ memory?: string; demo?: string }>();
+  const sharedId = validMemoryId(params.memory) ? params.memory : undefined;
+  const sample = params.demo === '1' && !!sharedId && SAMPLE_IDS.includes(sharedId);
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(!supabase);
   const [preview, setPreview] = useState(false);
@@ -34,13 +39,18 @@ export default function Home() {
   }, []);
 
   if (!ready) return <SafeAreaView style={s.safe}><ActivityIndicator accessibilityLabel="Restoring session" /></SafeAreaView>;
-  if (!session && !preview) return <Welcome onPreview={() => setPreview(true)} />;
-  return <Hangout key={session?.user.id ?? 'preview'} session={session} exitPreview={() => setPreview(false)} />;
+  if (!session && !sample && (!preview || sharedId)) return <Welcome memory={sharedId} onPreview={() => setPreview(true)} />;
+  const activeSession = sample ? null : session;
+  return <Hangout key={activeSession?.user.id ?? 'preview'} session={activeSession} sharedId={sharedId}
+    clearShared={() => { if (sample && !session) setPreview(true); router.setParams({ memory: '', demo: '' }); }}
+    exitPreview={() => { setPreview(false); if (sharedId) router.replace('/'); }} />;
 }
 
 // Show the existing scrapbook experience for the current account or guest.
 // The account menu exposes the signed-in identity and device-local sign-out.
-function Hangout({ session, exitPreview }: { session: Session | null; exitPreview: () => void }) {
+function Hangout({ session, exitPreview, sharedId, clearShared }: {
+  session: Session | null; exitPreview: () => void; sharedId?: string; clearShared: () => void;
+}) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [accountError, setAccountError] = useState('');
@@ -104,6 +114,7 @@ function Hangout({ session, exitPreview }: { session: Session | null; exitPrevie
   // Opening a byline or directory result changes the profile being viewed.
   // Tapping Profile in navigation always returns to the signed-in person's page.
   function visit(id: string) {
+    if (sharedId) clearShared();
     setOwner(id); setTab('profile'); setRevision(v => v + 1);
   }
   const visible = quests.filter(q => (!filters.inside || q.place==='indoors') && (!filters.quick || q.minutes<=5));
@@ -131,22 +142,25 @@ function Hangout({ session, exitPreview }: { session: Session | null; exitPrevie
         </View>
       </View></View>
     </Modal>
-    {tab==='home' && <ScrollView contentContainerStyle={s.scroll}><Text style={s.kicker}>YOUR PEOPLE. YOUR STORIES.</Text><Text style={s.title}>Life’s better with a{`\n`}<Text style={s.script}>side quest.</Text></Text><Text style={s.sub}>A little less scrolling. A few more “you had to be there” moments.</Text>
+    {sharedId && <SharedMemory key={sharedId + revision} id={sharedId} social={social} visit={visit}
+      back={() => { clearShared(); setTab('home'); }} />}
+    {!sharedId && tab==='home' && <HomeTimeline key={revision} social={social} visit={visit}
+      compose={() => setSelected({ title: 'Everyday memory' })} footer={<>
       <View style={s.hero}><Text style={s.heroKicker}>✦ THIS WEEK’S GROUP QUEST</Text><Text style={s.heroTitle}>Make an ordinary Tuesday{`\n`}a story worth telling.</Text><Text style={s.heroText}>Recreate an iconic album cover. With your people.</Text><Pressable style={s.darkButton} onPress={()=>setSelected(quests[0])}><Text style={s.darkButtonText}>Make a memory  ↗</Text></Pressable><Text style={s.heroArt}>📸</Text></View>
       <Section title="Your next “remember when”" action="See all" onAction={()=>setTab('quests')}/><QuestRow quest={visible[0]} onPress={setSelected}/><QuestRow quest={visible[1]} onPress={setSelected}/>
-      <Section title="A few pages from our story" action="Scrapbook" onAction={()=>setTab('scrapbook')}/><MemoryFeed key={revision} social={social} owner={social.me} visit={visit} firstOnly /></ScrollView>}
-    {tab==='quests' && <View style={{flex:1}}><View style={s.pageHead}><Text style={s.pageTitle}>Quest board</Text><Text style={s.sub}>Tiny missions. Big evidence.</Text><View style={s.filterRow}><Filter label="Indoors" active={filters.inside} onPress={()=>setFilters({...filters,inside:!filters.inside})}/><Filter label="5 min" active={filters.quick} onPress={()=>setFilters({...filters,quick:!filters.quick})}/><View style={s.free}><Text style={s.freeText}>◉ Always $0</Text></View></View></View><FlatList data={visible} contentContainerStyle={s.list} renderItem={({item})=><QuestRow quest={item} onPress={setSelected}/>} keyExtractor={q=>q.id}/></View>}
-    {tab === 'scrapbook' && <ScrollView contentContainerStyle={s.list}>
+    </>} />}
+    {!sharedId && tab==='quests' && <View style={{flex:1}}><View style={s.pageHead}><Text style={s.pageTitle}>Quest board</Text><Text style={s.sub}>Tiny missions. Big evidence.</Text><View style={s.filterRow}><Filter label="Indoors" active={filters.inside} onPress={()=>setFilters({...filters,inside:!filters.inside})}/><Filter label="5 min" active={filters.quick} onPress={()=>setFilters({...filters,quick:!filters.quick})}/><View style={s.free}><Text style={s.freeText}>◉ Always $0</Text></View></View></View><FlatList data={visible} contentContainerStyle={s.list} renderItem={({item})=><QuestRow quest={item} onPress={setSelected}/>} keyExtractor={q=>q.id}/></View>}
+    {!sharedId && tab === 'scrapbook' && <ScrollView contentContainerStyle={s.list}>
       <Text style={s.pageTitle}>Our scrapbook</Text><Text style={s.sub}>The memories you were part of.</Text>
       <View style={s.filterRow}><Action primary label="Create memory" onPress={() => setSelected({ title: 'Everyday memory' })} />
         <Action label="Refresh" onPress={() => setRevision(v => v + 1)} /></View>
       <MemoryFeed key={revision} social={social} owner={social.me} visit={visit} />
     </ScrollView>}
-    {tab === 'profile' && <Profile key={owner + revision} social={social} owner={owner} visit={visit}
+    {!sharedId && tab === 'profile' && <Profile key={owner + revision} social={social} owner={owner} visit={visit}
       compose={() => setSelected({ title: 'Everyday memory' })} />}
     <View style={s.nav}>{([['home','home-outline','The hangout'],['quests','flag-outline','Quests'],['scrapbook','images-outline','Scrapbook'],['profile','person-outline','Profile']] as const)
       .map(([key,icon,label]) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={label} style={s.navItem}
-        onPress={() => key === 'profile' ? visit(social.me) : setTab(key)}>
+        onPress={() => { if (key === 'profile') visit(social.me); else { if (sharedId) clearShared(); setTab(key); } }}>
         <Ionicons name={icon} size={22} color={tab === key ? '#D9683D' : '#8C9086'} />
         <Text style={[s.navLabel,tab === key && s.active]}>{label}</Text></Pressable>)}</View>
     {selected && <MemoryComposer social={social} title={selected.title} prompt={selected.prompt} onClose={() => setSelected(null)}
@@ -155,7 +169,7 @@ function Hangout({ session, exitPreview }: { session: Session | null; exitPrevie
 }
 // Offer provider sign-in when configured and keep guest preview available.
 // Wait for the session subscription to admit the user after provider success.
-function Welcome({ onPreview }: { onPreview: () => void }) {
+function Welcome({ onPreview, memory }: { onPreview: () => void; memory?: string }) {
   const busy = useRef(false);
   const [pending, setPending] = useState<Provider | null>(null);
   const [message, setMessage] = useState('');
@@ -169,6 +183,7 @@ function Welcome({ onPreview }: { onPreview: () => void }) {
     setPending(provider);
     setMessage('');
     try {
+      await rememberMemory(memory);
       await signIn(provider);
     } catch (error) {
       if ((error as { code?: string })?.code !== 'ERR_REQUEST_CANCELED') {
@@ -183,7 +198,7 @@ function Welcome({ onPreview }: { onPreview: () => void }) {
   return <SafeAreaView style={s.safe}><ScrollView contentContainerStyle={{ flexGrow: 1 }}>
     <View style={s.welcome}>
       <Text style={s.welcomeMark}>✳</Text><Text style={s.welcomeName}>memorygram.</Text>
-      <Text style={s.welcomeTitle}>Make a little mischief.</Text>
+      <Text style={s.welcomeTitle}>{memory ? 'Sign in to view this memory' : 'Make a little mischief.'}</Text>
       <Text style={s.welcomeText}>Side quests for your favorite people. Photo proof required.</Text>
       <View style={s.welcomeArt}><Text style={{fontSize:75}}>📸</Text></View>
       <Pressable accessibilityRole="button" disabled={disabled} style={s.oauth} onPress={() => start('google')}>
@@ -200,7 +215,8 @@ function Welcome({ onPreview }: { onPreview: () => void }) {
       {pending && <ActivityIndicator accessibilityLabel="Signing in" />}
       {!!message && <Text accessibilityRole="alert" style={s.welcomeText}>{message}</Text>}
       {!supabase && <Text style={s.welcomeText}>Connect Supabase to enable sign-in. Guest preview is available.</Text>}
-      <Pressable disabled={!!pending} onPress={onPreview}><Text style={s.previewLink}>Peek at the demo first</Text></Pressable>
+      {memory ? <Pressable onPress={() => router.replace('/')}><Text style={s.previewLink}>Back to Memorygram</Text></Pressable>
+        : <Pressable disabled={!!pending} onPress={onPreview}><Text style={s.previewLink}>Peek at the demo first</Text></Pressable>}
     </View>
   </ScrollView></SafeAreaView>;
 }

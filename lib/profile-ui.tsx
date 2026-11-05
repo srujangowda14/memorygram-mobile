@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Byline, FollowAction, Memory, PeopleList, Person, Social } from './social';
+import type { Activity, Byline, FollowAction, Memory, PeopleList, Person, Social } from './social';
+import { MemoryActions, useTimeline } from './memory-actions';
 
 // Pages are fetched using the same viewer-scoped query on every refresh.
 // Ignore late completions after navigating to a different person or filter.
@@ -41,7 +42,9 @@ export function Action({ label, onPress, primary, disabled }: {
 
 // Render the same caption and photo wherever a shared memory appears.
 // Participant names link to their profiles, including from the scrapbook.
-function MemoryPrint({ item, visit }: { item: Memory; visit: (id: string) => void }) {
+function MemoryPrint({ item, social, visit, onActivity }: {
+  item: Memory; social: Social; visit: (id: string) => void; onActivity?: (activity: Activity) => void;
+}) {
   return <View style={styles.print}>
     {item.image ? <Image accessibilityLabel={item.caption} source={{ uri: item.image }} style={styles.photo} />
       : <Text style={styles.note}>Photo unavailable</Text>}
@@ -51,23 +54,70 @@ function MemoryPrint({ item, visit }: { item: Memory; visit: (id: string) => voi
       accessibilityRole="button" onPress={() => visit(person.id)}>
       <Text style={styles.nameLink}>{person.name}</Text>
     </Pressable>)}</View>
+    <MemoryActions item={item} social={social} onActivity={onActivity} />
   </View>;
 }
 
-// Display the current person's visible memories in posting order.
-// Home can show the latest print while the profile and scrapbook page through all.
-export function MemoryFeed({ social, owner, visit, firstOnly = false }: {
-  social: Social; owner: string; visit: (id: string) => void; firstOnly?: boolean;
+// Display one person's visible memories in posting order. Profile and
+// scrapbook pagination are separate from the cross-profile home timeline.
+export function MemoryFeed({ social, owner, visit }: {
+  social: Social; owner: string; visit: (id: string) => void;
 }) {
   const load = useCallback((offset: number) => social.memories(owner, offset), [social, owner]);
   const page = usePage(load, 24);
   return <View>
-    {(firstOnly ? page.items.slice(0, 1) : page.items).map(m => <MemoryPrint key={m.id} item={m} visit={visit} />)}
+    {page.items.map(m => <MemoryPrint key={m.id} item={m} social={social} visit={visit} />)}
     {page.loading && <ActivityIndicator />}
     {!!page.error && <><Text style={styles.note}>{page.error}</Text><Action label="Retry memories" onPress={page.retry} /></>}
     {!page.loading && !page.error && !page.items.length && <Text style={styles.note}>No memories to show yet.</Text>}
-    {!firstOnly && page.more && !page.loading && !page.error && <Action label="More memories" onPress={page.next} />}
+    {page.more && !page.loading && !page.error && <Action label="More memories" onPress={page.next} />}
   </View>;
+}
+
+// Render one chronological stream across profiles, with refresh and cursor
+// pagination. Reuse the same card for posts from friends, groups and public users.
+export function HomeTimeline({ social, visit, compose, footer }: {
+  social: Social; visit: (id: string) => void; compose: () => void; footer: React.ReactElement;
+}) {
+  const page = useTimeline(social.feed);
+  return <FlatList data={page.rows} contentContainerStyle={styles.page} keyExtractor={m => m.id}
+    refreshing={page.loading && !page.rows.length} onRefresh={page.refresh}
+    ListHeaderComponent={<View style={{ gap: 8 }}><Text style={styles.heading}>Memory feed</Text>
+      <View style={styles.wrap}><Action primary label="Create memory" onPress={compose} />
+        <Action label="Refresh feed" onPress={page.refresh} /></View></View>}
+    renderItem={({ item }) => <MemoryPrint item={item} social={social} visit={visit}
+      onActivity={activity => page.replace({ ...item, activity })} />}
+    ListEmptyComponent={!page.loading && !page.error ? <Text style={styles.note}>Your feed is ready for its first memory. Post a photo or follow someone with a private profile.</Text> : null}
+    ListFooterComponent={<View>
+      {page.loading && <ActivityIndicator />}
+      {!!page.error && <Text accessibilityRole="alert">{page.error}</Text>}
+      {!page.loading && (page.more || !!page.error) && <Action label={page.error ? 'Retry feed' : 'More memories'}
+        onPress={page.error ? page.refresh : page.next} />}
+      {footer}
+    </View>} />;
+}
+
+// Re-fetch a shared post under the recipient's own session. Hidden and missing
+// posts receive the same response and expose no caption, image or byline.
+export function SharedMemory({ social, id, visit, back }: {
+  social: Social; id: string; visit: (id: string) => void; back: () => void;
+}) {
+  const [item, setItem] = useState<Memory | null>();
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setItem(undefined); setFailed(false);
+    social.memory(id).then(m => { if (active) setItem(m ?? null); })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [social, id, retry]);
+  return <ScrollView contentContainerStyle={styles.page}><Action label="Back to feed" onPress={back} />
+    <Text style={styles.heading}>Shared memory</Text>
+    {failed ? <><Text>Could not load this memory.</Text><Action label="Retry" onPress={() => setRetry(v => v + 1)} /></>
+      : item === undefined ? <ActivityIndicator /> : item === null ? <Text>This memory is unavailable to this account.</Text>
+      : <MemoryPrint item={item} social={social} visit={visit} />}
+  </ScrollView>;
 }
 
 // Load one searchable list of people. Remounting the results on search resets
