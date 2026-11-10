@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import type { Mode } from './memory-spaces';
 import type { AgeBand } from './quest-age';
 import catalog from './friend-quests.json';
+import settlements from './data/populated-places.json';
 import demoSpots from './data/sf-demo-spots.json';
 
 export type Radius = 1 | 5 | 10;
@@ -11,7 +12,7 @@ export type RestaurantBudget = 1 | 2 | 3 | 4;
 export type RestaurantListing = { name:string; rating:number; reviews:number; tier:RestaurantBudget; distance:number;
   attributions:{provider:string; providerUri?:string}[] };
 type Meeting = { meeting:string; meetingAddress:string; radius:Radius };
-export type Nearby = Meeting & ({ origin:'Google Maps'; placeId:string; budget:RestaurantBudget } | { venue: string; listing: string;
+export type Nearby = {origin:'OpenStreetMap';meeting:string;osmId:string;meetingAddress?:undefined} | Meeting & ({ origin:'Google Maps'; placeId:string; budget:RestaurantBudget } | { venue: string; listing: string;
   address: string; distance: number; source: string; startsAt: string | null; origin: 'Curated' | 'OpenAI' | 'Demo' });
 export type Offer = { id: string; title: string; prompt: string; nearby: Nearby; restaurant?:RestaurantListing };
 type Search = { restaurantBudget?:RestaurantBudget; draftId: string; mode: Mode; ageBand?:AgeBand; spotId: string; radius: Radius };
@@ -33,19 +34,53 @@ async function request<T>(path: string, signal: AbortSignal, body?: Search): Pro
   return response.json();
 }
 
-// The preview directory contains twelve published SF properties. Signed-in
-// accounts get the live directory from the authenticated service instead.
-export async function meetingSpots(preview: boolean, signal: AbortSignal): Promise<Spot[]> {
-  if (preview) return demoSpots;
-  return (await request<{spots:Spot[]}>('spots',signal)).spots;
-}
+export type Point = { lat:number; lon:number };
 
-// Filter the preview using unrounded straight-line miles. The production
-// service verifies the selected spot and computes its own distances.
-function miles(a: Spot,b: Spot) {
+// A great-circle distance keeps the search centered on the phone even
+// near the date line. Values are in miles throughout the picker.
+export function miles(a: Point,b: Point) {
   const rad = Math.PI/180;
   const h = Math.sin((b.lat-a.lat)*rad/2)**2 + Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin((b.lon-a.lon)*rad/2)**2;
   return 7917.52*Math.asin(Math.min(1,Math.sqrt(h)));
+}
+
+// Search from a published town center. Only coordinates from the bundled
+// gazetteer may reach the map service. Rank its candidates on the device.
+export async function mappedSpots(origin:Point, signal:AbortSignal):Promise<Spot[]> {
+  let nearest = Infinity;
+  let center:Point | undefined;
+  for (const [lat,lon] of settlements as [number,number,string][]) {
+    const town = {lat,lon};
+    const distance = miles(origin,town);
+    if (distance<nearest) {nearest=distance;center=town;}
+  }
+  if (!center || nearest>35) return [];
+  const params = new URLSearchParams({lat:String(center.lat),lon:String(center.lon),radius:String(Math.ceil(nearest*1.61)+5),limit:'50'});
+  for (const tag of ['leisure:park','amenity:library','place:square','amenity:community_centre','amenity:cafe','tourism:museum']) params.append('osm_tag',tag);
+  const response = await fetch('https://photon.komoot.io/reverse?'+params,{signal});
+  if (!response.ok) throw new Error('Nearby maps are unavailable. Try again or use your current location.');
+  const data = await response.json() as {features:{geometry:{coordinates:number[]};properties:{
+    osm_type:string;osm_id:number;osm_value:string;name?:string;street?:string;district?:string}}[]};
+  const types:Record<string,string> = {N:'node',W:'way',R:'relation'};
+  return data.features.flatMap(row=>{
+    const p=row.properties, [lon,lat]=row.geometry.coordinates;
+    if (!p.name || !types[p.osm_type] || !Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+    return [{id:'osm:'+types[p.osm_type]+':'+p.osm_id,name:p.name,address:p.street || p.district || '',
+      lat,lon,type:p.osm_value}];
+  });
+}
+
+// Preserve curated SF outings where the directory has nearby coverage.
+// Everywhere else search the same local radius using OpenStreetMap.
+export async function meetingSpots(preview:boolean, origin:Point, signal:AbortSignal):Promise<Spot[]> {
+  const rank = (rows:Spot[]) => rows.filter(p=>miles(origin,p)<=3).sort((a,b)=>miles(origin,a)-miles(origin,b));
+  if (miles(origin,{lat:37.77,lon:-122.45})<8) {
+    try {
+      const rows=rank(preview ? demoSpots : (await request<{spots:Spot[]}>('spots',signal)).spots);
+      if (rows.length) return rows;
+    } catch (error) { if (signal.aborted) throw error; }
+  }
+  return rank(await mappedSpots(origin,signal));
 }
 
 // A live search receives redeemable offer IDs. Demo suggestions are labeled

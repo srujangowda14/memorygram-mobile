@@ -4,12 +4,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { Action } from './profile-ui';
 import type { AgeBand } from './quest-age';
 import type { Mode } from './memory-spaces';
-import { meetingSpots, nearbyTasks, type Nearby, type Offer, type RestaurantListing, type RestaurantBudget, type Radius, type Spot } from './nearby';
+import { meetingSpots, nearbyTasks, miles, type Point, type Nearby, type Offer, type RestaurantListing, type RestaurantBudget, type Radius, type Spot } from './nearby';
 
 // Show the original listing and its distance from the chosen public spot.
 // Event dates use San Francisco time on every member's device.
 export function ListingDetails({ item, restaurant }: { item: Nearby; restaurant?: RestaurantListing }) {
   const [failed,setFailed] = useState(false);
+  if (item.origin === 'OpenStreetMap') {
+    const url='https://www.openstreetmap.org/'+item.osmId.replace(':','/');
+    return <View><Text style={s.venue}>{item.meeting}</Text><Text accessibilityRole="link" style={s.link}
+      onPress={()=>Linking.openURL(url).catch(()=>setFailed(true))}>View meeting spot on OpenStreetMap ↗</Text>
+      {failed && <Text selectable>{url}</Text>}</View>;
+  }
   if (item.origin === 'Google Maps') {
     const url = 'https://www.google.com/maps/search/?api=1&query=restaurant&query_place_id=' + encodeURIComponent(item.placeId);
     return <View style={s.stack}>
@@ -39,8 +45,8 @@ export function ListingDetails({ item, restaurant }: { item: Nearby; restaurant?
 
 // Select a public meeting point explicitly. Editing that point or the radius
 // cancels the old request and clears any selected offer before creation.
-export function MeetingPicker({ preview,mode,ageBand,draftId,selected,choose,disabled }: {
-  preview:boolean; mode:Mode; ageBand?:AgeBand; draftId:string; selected?:Offer; choose:(offer?:Offer)=>void; disabled:boolean;
+export function MeetingPicker({ origin, selectLocal, preview,mode,ageBand,draftId,selected,choose,disabled }: {
+  origin:Point; selectLocal:(spot:Spot)=>void; preview:boolean; mode:Mode; ageBand?:AgeBand; draftId:string; selected?:Offer; choose:(offer?:Offer)=>void; disabled:boolean;
 }) {
   const [spots,setSpots] = useState<Spot[]>([]);
   const [spot,setSpot] = useState<Spot>();
@@ -56,13 +62,16 @@ export function MeetingPicker({ preview,mode,ageBand,draftId,selected,choose,dis
   const controller = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     const abort = new AbortController();
+    const timer = setTimeout(() => {
+      abort.abort(); setLoading(false); setLoadError('The map lookup timed out. Retry or return to your current location.');
+    }, 15000);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the directory status when starting a new lookup.
     setLoading(true); setLoadError('');
-    meetingSpots(preview,abort.signal).then(rows => { if (!abort.signal.aborted) setSpots(rows); })
+    meetingSpots(preview,origin,abort.signal).then(rows => { if (!abort.signal.aborted) setSpots(rows); })
       .catch(e => { if (!abort.signal.aborted) setLoadError(e.message || 'The city directory is unavailable.'); })
-      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
-    return () => { abort.abort(); controller.current?.abort(); };
-  },[preview,revision]);
+      .finally(() => { clearTimeout(timer); if (!abort.signal.aborted) setLoading(false); });
+    return () => { clearTimeout(timer); abort.abort(); controller.current?.abort(); };
+  },[origin,preview,revision]);
 
   // Invalidate offers tied to the previous meeting spot or radius. A slow
   // response can never reselect a destination from an earlier search.
@@ -92,18 +101,18 @@ export function MeetingPicker({ preview,mode,ageBand,draftId,selected,choose,dis
   const matching = spots.filter(p => (p.name+' '+p.address).toLowerCase().includes(term.trim().toLowerCase())).slice(0,6);
   const visibleOffers = selected ? offers?.filter(o => o.id===selected.id) : offers;
   return <View style={s.stack}>
-    <Text style={s.heading}>Meet in San Francisco</Text>
-    <Text style={s.meta}>{preview ? 'Guest preview uses sample places and curated tasks.' :
-      'Choose a public meeting spot. Your space will show the spot and the suggestion you select.'}</Text>
+    <Text style={s.heading}>Meeting spots near you</Text>
+    <Text style={s.meta}>Public places within 3 miles, closest first.</Text>
+    {spots.some(p=>p.id.startsWith('osm:')) && <Text accessibilityRole="link" onPress={()=>Linking.openURL('https://www.openstreetmap.org/copyright')} style={s.link}>© OpenStreetMap contributors</Text>}
     {loading && <ActivityIndicator />}
     {!!loadError && <><Text accessibilityRole="alert">{loadError}</Text><Action label="Retry directory" onPress={() => setRevision(n=>n+1)} /></>}
     {!loading && !loadError && (!spot ? <>
       <TextInput style={s.input} value={term} editable={!disabled} accessibilityLabel="Search meeting spots"
         placeholderTextColor="#676D61" placeholder="Search a park, plaza, or street" onChangeText={setTerm} />
       {matching.map(p => <Pressable key={p.id} accessibilityRole="button" accessibilityLabel={'Meet at '+p.name}
-        style={s.row} onPress={() => { clearOffers(); setSpot(p); }}><Ionicons name="location-outline" size={19} color="#536148"/>
-        <View style={{flex:1}}><Text style={s.venue}>{p.name}</Text><Text style={s.meta}>{p.address || p.type}</Text></View></Pressable>)}
-      {!matching.length && <Text style={s.meta}>No matching city places. Try a park or another street.</Text>}
+        style={s.row} onPress={() => { clearOffers(); if (p.id.startsWith('osm:')) selectLocal(p); else setSpot(p); }}><Ionicons name="location-outline" size={19} color="#536148"/>
+        <View style={{flex:1}}><Text style={s.venue}>{p.name}</Text><Text style={s.meta}>{miles(origin,p).toFixed(1)} mi · {p.address || p.type}</Text></View></Pressable>)}
+      {!matching.length && <Text style={s.meta}>No matching nearby places. Try a different name or use your current location.</Text>}
     </> : <>
       <Text style={s.venue}>Meet at {spot.name}</Text><Text style={s.meta}>{spot.address}</Text>
       <Action label="Change meeting spot" disabled={disabled} onPress={() => { clearOffers();setSpot(undefined); }} />

@@ -5,14 +5,15 @@ import type { AgeBand } from './quest-age';
 import prompts from './memory-prompts.json';
 import type { Byline, Cursor, Reply } from './social';
 import type { TaskPlace } from './task-location';
-import type { Nearby, Offer } from './nearby';
+import type { Nearby, Offer, Spot } from './nearby';
 
 export type Mode = 'solo' | 'group';
 export type Space = Cursor & { name: string; mode: Mode; ageBand?: AgeBand; people: Byline[] };
 export type Task = { id: string; title: string; prompt: string; minutes: number; setting: string; result?: string; nearby?: Nearby };
-export type StartSpace = { id: string; name: string; mode: Mode; friends: Byline[]; place: TaskPlace; offer?: Offer; ageBand?: AgeBand };
+export type StartSpace = { id: string; name: string; mode: Mode; friends: Byline[]; place: TaskPlace; localSpot?: Spot; offer?: Offer; ageBand?: AgeBand };
 export interface Spaces {
   start(input: StartSpace): Promise<string>;
+  addOuting(group:string,spot:Spot):Promise<void>;
   setRange(group:string,band?:AgeBand):Promise<void>;
   addQuest(group:string,key:string):Promise<void>;
   list(before?: Cursor): Promise<Space[]>;
@@ -43,7 +44,8 @@ export function connectedSpaces(db: SupabaseClient): Spaces {
     // mutual follows and assigns all three tasks in the creation transaction.
     async start(input) {
       const common = { gid: input.id, mode: input.mode, space_name: input.name, companions: input.friends.map(f => f.id) };
-      const { data, error } = input.mode === 'group' && input.ageBand ? await db.rpc('start_age_space', {
+      const { data, error } = input.localSpot ? await db.rpc('start_local_meeting', { gid:input.id, space_name:input.name, companions:common.companions,
+        spot_name:input.localSpot.name.slice(0,80), osm_id:input.localSpot.id.slice(4) }) : input.mode === 'group' && input.ageBand ? await db.rpc('start_age_space', {
         gid:input.id, space_name:input.name, companions:common.companions, age_range:input.ageBand,
         place_context:input.place.key, locality_name:input.place.key==='locality'?input.place.name:null, offer_id:input.offer?.id ?? null,
       }) : input.offer ? await db.rpc('start_nearby_memory_space', { ...common, offer_id:input.offer.id })
@@ -51,6 +53,12 @@ export function connectedSpaces(db: SupabaseClient): Spaces {
         locality_name: input.place.key === 'locality' ? input.place.name : null });
       if (error) throw new Error(error.message);
       return data as string;
+    },
+    // Append a mapped destination through the member-authorized transaction.
+    // The map feature ID also makes repeated taps safe to retry.
+    async addOuting(group,spot) {
+      const {error}=await db.rpc('add_local_outing',{gid:group,spot_name:spot.name.slice(0,80),osm_id:spot.id.slice(4)});
+      if(error) throw error;
     },
     // Save the shared browsing preference without changing assigned tasks.
     // The database checks that the requesting user belongs to this group.
@@ -152,11 +160,23 @@ export function previewSpaces(me: Byline) {
         const options = input.ageBand && tailored.length ? tailored : [...pool,...tailored];
         const choice = options[Math.floor(Math.random() * options.length)];
         const prompt = input.place.key === 'locality' ? choice.prompt.replace('{place}', input.place.name) : choice.prompt;
-        return { ...choice, prompt, id: randomUUID() };
+        const nearby:Nearby | undefined = family==='place' && input.localSpot ? {origin:'OpenStreetMap',
+          meeting:input.localSpot.name,osmId:input.localSpot.id.slice(4)} : undefined;
+        return { ...choice, prompt, nearby, id: randomUUID() };
       });
       rooms.set(input.id, { space: { id: input.id, mode: input.mode, ageBand:input.ageBand, name: input.name,
         people: [me,...input.friends], created: new Date().toISOString() }, tasks, messages: [] });
       return input.id;
+    },
+    // Preserve one assignment per public map feature in this guest session.
+    // Members can add another destination without replacing completed tasks.
+    async addOuting(group:string,spot:Spot) {
+      const r=room(group);
+      const osmId=spot.id.slice(4);
+      if(r.tasks.some(q=>q.nearby?.origin==='OpenStreetMap' && q.nearby.osmId===osmId)) return;
+      r.tasks.push({id:randomUUID(),title:spot.name.slice(0,80),
+        prompt:'Visit '+spot.name.slice(0,80)+' together. Save a photo and each person’s favorite detail from the outing.',
+        minutes:30,setting:'anywhere',nearby:{origin:'OpenStreetMap',meeting:spot.name,osmId}});
     },
     // Update the preview group's preference for future assignments.
     // Its task list and saved photos stay attached to the room.

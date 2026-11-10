@@ -27,7 +27,7 @@ Each new space receives three different jobs. The 23-prompt starter catalog cont
 | Make or notice something new | **Keep the first draft.** Try something on scrap paper and save one thing the first attempt taught you. | **Same minute, two stories.** Compare the first thing two friends noticed, in person or on a call. |
 | Anchor the memory to a place | **The unofficial postage stamp.** Design a stamp for the nearby town using a detail worth remembering. | **Postcard from right here.** Pick a detail a visitor would miss and address a line to a friend who would recognize it. |
 
-The baseline place pool works at home, from a seat, or across a call. The location option changes only the third assignment. It first looks for a named landmark, then a nearby mapped town or city, then a local time-of-day cue. A place name is shown before creation so the user can decide whether to include it in the group's prompt. On native devices the system geocoder can supply a town when the offline map has no match.
+The baseline place pool works at home, from a seat, or across a call. The location option changes only the third assignment. Native devices first request a street or neighborhood and city. The offline fallback uses a named landmark, nearby town, or local time-of-day cue. A place name is shown before creation so the user can decide whether to include it in the group's prompt.
 
 ## Geographic sources and limits
 

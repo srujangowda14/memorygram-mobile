@@ -1,3 +1,4 @@
+import { NearbyOutings } from './nearby-outings';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -10,9 +11,10 @@ import { contexts, suggestContext, type TaskPlace } from './task-location';
 import type { Byline, Reply, Social } from './social';
 import type { Mode, Space, Task } from './memory-spaces';
 import { ListingDetails, MeetingPicker } from './meeting-picker';
+import placePrompts from './memory-prompts.json';
 import catalog from './friend-quests.json';
 import type { AgeBand } from './quest-age';
-import type { Offer } from './nearby';
+import type { Offer, Point, Spot } from './nearby';
 
 // Offer two kinds of space before asking for names, people or permissions.
 // Keep the existing one-off photo composer reachable from the same entry point.
@@ -37,10 +39,13 @@ export function StartMemory({ social, close, open, photo }: {
   const range = lookup?.members === members ? lookup.range : undefined;
   const ageBand = mode === 'group' && range !== 'All ages' ? range : undefined;
   const missingAges = mode === 'group' && !range;
-  const [place, setPlace] = useState<TaskPlace>({ key: 'anywhere' });
-  const areaLabel = place.key === 'locality' ? place.name : contexts[place.key];
+  const [currentPlace, setPlace] = useState<TaskPlace>({ key: 'anywhere' });
   const [locating, setLocating] = useState(false);
   const [choosingSpot, setChoosingSpot] = useState(false);
+  const [origin,setOrigin] = useState<Point>();
+  const [localSpot,setLocalSpot] = useState<Spot>();
+  const place:TaskPlace = localSpot ? {key:'locality',name:localSpot.name.slice(0,80)} : currentPlace;
+  const areaLabel = place.key === 'locality' ? place.name : contexts[place.key];
   const [offer, setOffer] = useState<Offer>();
   const [locationNote, setLocationNote] = useState('');
   const [error, setError] = useState('');
@@ -54,18 +59,20 @@ export function StartMemory({ social, close, open, photo }: {
   // Starting a space is available even if the device never supplies a fix.
   function clearLocation() {
     ticket.current++; setLocating(false); setPlace({ key: 'anywhere' }); setLocationNote('');
-    setChoosingSpot(false); setOffer(undefined);
+    setChoosingSpot(false); setOffer(undefined); setOrigin(undefined); setLocalSpot(undefined);
   }
 
   // Preview the place label before it is used for an assignment. Permission
   // denial, timeout and unavailable services all retain the anywhere option.
-  async function locate() {
+  async function locate(openPicker = false) {
     const generation = ++ticket.current;
-    setLocating(true); setLocationNote('');
+    setLocating(true); setLocationNote(''); setLocalSpot(undefined); setOrigin(undefined); setPlace({key:'anywhere'});
     try {
-      const place = await suggestContext();
+      const fix = await suggestContext();
+      const place = fix.place;
       if (generation === ticket.current) {
-        setPlace(place);
+        setPlace(place); setOrigin(fix.origin); setChoosingSpot(openPicker);
+        if (fix.accuracy && fix.accuracy>1000) setLocationNote('Your phone reported an approximate fix. Enable Precise Location and refresh for closer results.');
         if (['morning','afternoon','evening'].includes(place.key)) setLocationNote('Location found. No nearby town matched the offline map, so this task uses local time.');
       }
     } catch (e) {
@@ -91,7 +98,7 @@ export function StartMemory({ social, close, open, photo }: {
     lock.current = true; setBusy(true); setError(''); ticket.current++; setLocating(false);
     try {
       const id = await social.spaces.start({ id: draftId, name: name.trim() || (mode === 'solo' ? 'My Pocket Chapter' : 'Our memory group'),
-        mode, friends: mode === 'group' ? friends : [], place, offer, ageBand });
+        mode, friends: mode === 'group' ? friends : [], place, offer, ageBand, localSpot:offer ? undefined : localSpot });
       open(id);
     } catch (e) {
       if (e instanceof Error && e.message.includes('suggestion expired')) {
@@ -110,7 +117,7 @@ export function StartMemory({ social, close, open, photo }: {
       <ScrollView style={st.flex} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={st.page}>
         {!mode ? <>
           <Text style={st.body}>Who are you making this memory with?</Text>
-          <ModeCard mode="solo" onPress={() => setMode('solo')} />
+          <ModeCard mode="solo" onPress={() => {setMode('solo'); void locate();}} />
           <ModeCard mode="group" onPress={() => setMode('group')} />
           <Action label="Post an existing photo" onPress={photo} />
         </> : <>
@@ -127,17 +134,21 @@ export function StartMemory({ social, close, open, photo }: {
               <Text style={st.meta}>Checking group ages…</Text>)}
           </View>}
           <View style={st.panel}>
-            {choosingSpot ? <><MeetingPicker key={ageBand || 'all'} ageBand={ageBand} preview={social.preview} mode={mode} draftId={draftId}
+            {choosingSpot && origin ? <><MeetingPicker origin={origin} selectLocal={spot=>{setLocalSpot(spot);setChoosingSpot(false);}} key={ageBand || 'all'} ageBand={ageBand} preview={social.preview} mode={mode} draftId={draftId}
               selected={offer} choose={o => { setOffer(o); setError(''); }} disabled={busy} />
-              <Action label="Use anywhere tasks" disabled={busy} onPress={clearLocation} /></> : <>
-            <View style={st.inline}><Ionicons name="location-outline" size={19} color="#59694C" /><Text style={st.heading}>{mode==='solo' ? 'Where will you go?' : 'Where will you meet?'}</Text></View>
-            <Action label="Choose a meeting spot" disabled={busy} onPress={() => {
-              clearLocation(); setChoosingSpot(true);
-            }} />
-            <Text style={st.body}>{place.key === 'anywhere' ? 'Or use your location once for a curated prompt. Your phone can look up a nearby town. Only the place label is saved.' :
-              (mode === 'group' ? 'Your group’s task can mention ' : 'Your task will use ') + areaLabel + '.'}</Text>
+              <Action label="Back to current location" disabled={busy} onPress={()=>{setChoosingSpot(false);setOffer(undefined);}} /></> : <>
+            <View style={st.inline}><Ionicons name="location-outline" size={19} color="#59694C" /><Text style={st.heading}>{mode==='solo' ? 'Your starting point' : 'Where will you meet?'}</Text></View>
+            {mode==='group' && <><Action label="Choose a meeting spot" disabled={busy || locating} onPress={() => {
+              if (origin) {setOffer(undefined); setLocalSpot(undefined); setChoosingSpot(true);} else void locate(true);
+            }} /><Text style={st.meta}>Find parks, squares and libraries near your pin. The map lookup uses a public town center.</Text></>}
+            <Text style={st.body}>{place.key === 'anywhere' ? (locating ? 'Looking up your current location…' : 'Use a current location fix to find a quest here.') :
+              (localSpot ? 'Meet at ' : mode === 'group' ? 'Your group’s task can mention ' : 'Starting from ') + areaLabel + '.'}</Text>
+            {origin && !localSpot && <Text selectable style={st.meta}>Current pin · {origin.lat.toFixed(5)}, {origin.lon.toFixed(5)}</Text>}
+            {mode==='solo' && origin && <View style={st.section}><Text style={st.label}>Quest ideas from here</Text>
+              {placePrompts.filter(p=>p.context===place.key).slice(0,2).map(p=><View key={p.key}><Text style={st.label}>{p.title}</Text>
+                <Text style={st.body}>{p.prompt.replace('{place}',areaLabel)}</Text></View>)}</View>}
             <View style={st.wrap}>{<Action label={locating ? 'Finding location…' : place.key === 'anywhere' ? 'Use my location' : 'Refresh location'}
-              disabled={busy || locating} onPress={locate} />}
+              disabled={busy || locating} onPress={()=>void locate()} />}
               {(locating || place.key !== 'anywhere') && <Action label="Use anywhere tasks" disabled={busy} onPress={clearLocation} />}</View>
             {!!locationNote && <Text accessibilityRole="alert" style={st.body}>{locationNote}</Text>}
             </>}
@@ -228,6 +239,8 @@ export function SpaceRoom({ social, id, back, visit }: { social: Social; id: str
         <View style={st.wrap}><Action primary={!chat} label="Assigned tasks" onPress={() => { setChat(false); setRevision(n => n + 1); }} />
           {room.space.mode === 'group' && <Action primary={chat} label="Group chat" onPress={() => setChat(true)} />}</View>
         {chat ? <GroupChat social={social} group={id} /> : <>
+          {room.space.mode==='group' && <NearbyOutings social={social} group={id} tasks={room.tasks} updated={()=>setRevision(n=>n+1)} />}
+          <Text style={st.heading}>Your group’s tasks</Text>
           {room.space.mode==='group' && <Action label={limit?'Close quest library':'Browse quests · '+(room.space.ageBand || 'All ages')} onPress={()=>setLimit(limit?0:6)} />}
            {limit>0 && <View style={st.section}>
             {choices.slice(0,limit).map(q=><View key={q.key} style={st.panel}>
@@ -240,7 +253,7 @@ export function SpaceRoom({ social, id, back, visit }: { social: Social; id: str
           {room.tasks.map(q => <View key={q.id} style={st.panel}><Text style={st.heading}>{q.title}</Text>
             <Text style={st.body}>{q.prompt}</Text>
             {q.nearby && <ListingDetails item={q.nearby} />}
-            {q.nearby?.origin !== 'Google Maps' && <Text style={st.meta}>{q.minutes} min · {q.nearby ? 'Free activity' : q.setting + ' · Free'}</Text>}
+            {q.nearby?.origin !== 'Google Maps' && q.nearby?.origin !== 'OpenStreetMap' && <Text style={st.meta}>{q.minutes} min · {q.nearby ? 'Free activity' : q.setting + ' · Free'}</Text>}
             <Action label={q.result ? 'View memory' : 'Add a memory'} onPress={() => q.result ? setReading(q.result) : setTask(q)} /></View>)}
         </>}
         {task && <MemoryComposer social={social} title={task.title} prompt={task.prompt} assignment={{ space: room.space, taskId: task.id }}

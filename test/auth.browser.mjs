@@ -71,9 +71,19 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
       assert.equal(url.pathname,'/v1/nearby/suggestions');
       const input = route.request().postDataJSON();
       nearbyDraft = input.draftId;
-      assert.deepEqual(input,{mode:'solo',draftId:nearbyDraft,spotId:'117',radius:5,restaurantBudget:1});
+      assert.deepEqual(input,{mode:'group',draftId:nearbyDraft,spotId:'117',radius:5,restaurantBudget:1});
       return route.fulfill({json:{offers:[offer,dining],calendarAvailable:true,restaurantStatus:'found'}});
     }
+    if (url.hostname==='photon.komoot.io') {
+      assert.notEqual(url.searchParams.get('lat'),'12.97436');
+      assert.notEqual(url.searchParams.get('lon'),'77.59388');
+      return route.fulfill({json:{features:[
+        {geometry:{coordinates:[77.594,12.975]},properties:{osm_type:'N',osm_id:123,name:'Central Library',osm_value:'library'}},
+        {geometry:{coordinates:[77.593,12.974]},properties:{osm_type:'N',osm_id:456,name:'Local Cafe',osm_value:'cafe'}},
+        {geometry:{coordinates:[-122.435,37.776]},properties:{osm_type:'N',osm_id:234,name:'Alamo Square',osm_value:'park'}}]}});
+    }
+    if (url.pathname==='/rest/v1/rpc/profile_people') return route.fulfill({json:[{id:mid,display_name:'Alex',is_private:false,relation:'accepted',follows_me:true,followers:1,following:1}]});
+    if (url.pathname==='/rest/v1/rpc/group_profile_range') return route.fulfill({json:'All ages'});
     if (url.origin !== project) return route.abort();
     if (url.pathname === '/rest/v1/profile_birthdays') {
       if (route.request().method()==='POST') {
@@ -84,11 +94,11 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
       return route.fulfill({json:birthday ? [{birthday}] : []});
     }
     if (url.pathname === '/rest/v1/rpc/start_nearby_memory_space') {
-      assert.deepEqual(route.request().postDataJSON(),{gid:nearbyDraft,mode:'solo',space_name:'My Pocket Chapter',companions:[],offer_id:dining.id});
+      assert.deepEqual(route.request().postDataJSON(),{gid:nearbyDraft,mode:'group',space_name:'Our memory group',companions:[mid],offer_id:dining.id});
       return route.fulfill({json:nearbyDraft});
     }
     if (nearbyDraft && url.pathname === '/rest/v1/groups' && url.searchParams.get('id') === 'eq.'+nearbyDraft)
-      return route.fulfill({json:{...room,id:nearbyDraft,memory_mode:'solo',name:'My Pocket Chapter'}});
+      return route.fulfill({json:{...room,id:nearbyDraft,memory_mode:'group',name:'Our memory group'}});
     if (nearbyDraft && url.pathname === '/rest/v1/quests' && url.searchParams.get('group_id') === 'eq.'+nearbyDraft)
       return route.fulfill({json:[{id:gid,title:dining.title,prompt:dining.prompt,nearby:dining.nearby,minutes:10,setting:'anywhere',memories:[]}]});
     if (url.pathname === '/rest/v1/groups') return route.fulfill({ json: url.searchParams.has('id') ? room : [room] });
@@ -228,13 +238,15 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
   assert.equal(await page.getByText(/^While disconnected /).count(), 30);
   assert.equal(await page.getByText('I found the perfect detail.', {exact:true}).count(), 1);
   const button = name => page.getByRole('button',{name,exact:true});
-  await button('Start a memory').click(); await button('Pocket Chapter').click();
+  await page.context().setGeolocation({latitude:37.776,longitude:-122.435,accuracy:10});
+  await button('Start a memory').click(); await button('With others').click();
+  await page.getByRole('checkbox',{name:/Alex/}).click();
   await button('Choose a meeting spot').click(); await button('Meet at Alamo Square').click();
   await page.getByRole('radio',{name:'$',exact:true}).click();
   await button('Find suggestions').click(); await page.getByText('OpenAI suggestion',{exact:false}).waitFor();
   await page.getByText('Test Tea House',{exact:true}).waitFor();
   await page.getByText('4.8 ★ (72 reviews)',{exact:false}).waitFor();
-  await button('Choose this task').last().click(); await button('Start Pocket Chapter').click();
+  await button('Choose this task').last().click(); await button('Create group').click();
   await page.getByText('Try a nearby restaurant',{exact:true}).waitFor();
   await page.getByRole('link',{name:'View restaurant on Google Maps',exact:false}).waitFor();
   assert.equal(await page.getByText('Free activity',{exact:false}).count(),0);
@@ -252,29 +264,21 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
 // Follow the same meeting and selection steps as a new user. Changing the
 // radius invalidates the old choice before the group can be created.
 async function checkMeetingSpot(page) {
+  await page.context().setGeolocation({latitude:12.97436,longitude:77.59388,accuracy:10});
   const button = name => page.getByRole('button',{name,exact:true});
   await button('Start a memory').click();
   await button('With others').click();
   await page.getByRole('checkbox',{name:/Sam Rivera/}).click();
   await page.getByLabel('Space name').fill('Friday park walk');
   await button('Choose a meeting spot').click();
-  await page.getByLabel('Search meeting spots').fill('Alamo');
-  await button('Meet at Alamo Square').click();
-  await button('Find suggestions').click();
-  await button('Choose this task').first().click();
-  assert.equal(await button('Create group').isEnabled(),true);
-  await page.getByRole('radio',{name:'1 mi',exact:true}).click();
-  assert.equal(await button('Create group').isEnabled(),false);
-  await button('Find suggestions').click();
-  await button('Choose this task').first().click();
+  assert.equal(await button('Meet at Alamo Square').count(),0);
+  await button('Meet at Central Library').click();
   await button('Create group').click();
   await page.getByText('Friday park walk',{exact:true}).waitFor();
-  await page.getByText('Meet at Alamo Square',{exact:true}).waitFor();
-  assert.equal(await button('Add a memory').count(),3);
-  await page.getByText('1 mi radius',{exact:false}).waitFor();
-  await button('← Your spaces').click();
-  await button('Open Friday park walk').click();
-  await page.getByText('Meet at Alamo Square',{exact:true}).waitFor();
+  await page.getByText('Meet at Central Library',{exact:true}).waitFor();
+  await button('Add outing · Local Cafe').click();
+  await page.getByText('Visit Local Cafe together.',{exact:false}).waitFor();
+  assert.equal(await page.getByText('Local Cafe',{exact:true}).count(),3);
   await button('The hangout').click();
 }
 
@@ -289,7 +293,7 @@ async function checkMemorySpaces(page) {
   await button('Start a memory').click();
   await button('Pocket Chapter').click();
   await page.getByLabel('Space name').fill('Quiet Saturday');
-  await button('Use my location').click();
+  assert.equal(await button('Choose a meeting spot').count(),0);
   await page.getByText('Location is unavailable.', { exact: false }).waitFor();
   await button('Start Pocket Chapter').click();
   await page.getByText('Quiet Saturday', { exact: true }).waitFor();
@@ -357,7 +361,12 @@ async function checkMemorySpaces(page) {
   await button('The hangout').click();
   await page.getByText('The coin picked the bakery.', { exact: true }).waitFor();
   assert.equal(await page.getByText('The crooked paper trophy', { exact: true }).count(),0);
-  await geo.detach();
+  await button('Start a memory').click(); await button('Pocket Chapter').click();
+  await page.getByText('Quest ideas from here').waitFor();
+  await page.getByText('Cubbon Park in miniature',{exact:true}).waitFor();
+  assert.equal(await button('Choose a meeting spot').count(),0);
+  await button('Back').click(); await button('Close').click();
+  // Keep the permission override active for the remaining location scenarios.
 }
 
 // Walk through the actual guest UI with a local sample photo. Verify the

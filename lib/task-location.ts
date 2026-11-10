@@ -42,13 +42,13 @@ export function contextForLocation(latitude: number, longitude: number, accuracy
 
 // Ask only after the user taps the location control. A single foreground
 // reading is reduced on the device before any data reaches the room store.
-export async function suggestContext(): Promise<TaskPlace> {
+export async function suggestContext() {
   if (Platform.OS === 'web') {
     const coords = await new Promise<GeolocationCoordinates>((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(p => resolve(p.coords), reject,
-        { maximumAge: 0, timeout: 12000, enableHighAccuracy: false });
+        { maximumAge: 0, timeout: 12000, enableHighAccuracy: true });
     });
-    return contextForLocation(coords.latitude, coords.longitude, coords.accuracy);
+    return { place: contextForLocation(coords.latitude, coords.longitude, coords.accuracy), origin: { lat:coords.latitude, lon:coords.longitude }, accuracy:coords.accuracy };
   }
   const permission = await Location.requestForegroundPermissionsAsync();
   if (!permission.granted) throw new Error('Location is unavailable. Enable location access for this app in Settings, then retry.');
@@ -60,12 +60,18 @@ export async function suggestContext(): Promise<TaskPlace> {
     });
     const { coords } = await Promise.race([Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }), timeout]);
     const place = contextForLocation(coords.latitude, coords.longitude, coords.accuracy);
-    if (place.key === 'locality' || ['crissy','mall','cubbon'].includes(place.key)) return place;
+    const fix = { origin: { lat:coords.latitude, lon:coords.longitude }, accuracy:coords.accuracy };
     try {
       const [address] = await Promise.race([Location.reverseGeocodeAsync(coords), timeout]);
-      const name = (address?.city || address?.district)?.trim();
-      if (name && name.length<=80) return { key:'locality', name };
+      // Keep house numbers out of shared quest text. A street or neighborhood
+      // identifies the start more closely than the administrative area.
+      const street = address?.street?.trim();
+      const district = address?.district?.trim();
+      const local = district && !/county/i.test(district) ? district : undefined;
+      const city = address?.city && !/county/i.test(address.city) ? address.city : undefined;
+      const name = [...new Set([street || local, city].filter(Boolean))].join(', ').slice(0,80);
+      if (name) return { ...fix, place:{ key:'locality' as const, name } };
     } catch { /* The offline time cue remains available without a city lookup. */ }
-    return place;
+    return { ...fix, place };
   } finally { clearTimeout(timer); }
 }
