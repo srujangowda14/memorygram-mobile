@@ -15,6 +15,7 @@ function usePage<T>(load: (offset: number) => Promise<T[]>, size: number) {
   const [error, setError] = useState('');
   useEffect(() => {
     let current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Expose loading state when pagination or retry starts.
     setLoading(true); setError('');
     load(offset).then(rows => {
       if (!current) return;
@@ -87,7 +88,7 @@ export function HomeTimeline({ social, visit, compose, footer }: {
         <Action label="Refresh feed" onPress={page.refresh} /></View></View>}
     renderItem={({ item }) => <MemoryPrint item={item} social={social} visit={visit}
       onActivity={activity => page.replace({ ...item, activity })} />}
-    ListEmptyComponent={!page.loading && !page.error ? <Text style={styles.note}>Your feed is ready for its first memory. Post a photo or follow someone with a private profile.</Text> : null}
+    ListEmptyComponent={!page.loading && !page.error ? <Text style={styles.note}>Your feed is ready for its first memory. Post a photo or follow someone with a private profile.</Text> : undefined}
     ListFooterComponent={<View>
       {page.loading && <ActivityIndicator />}
       {!!page.error && <Text accessibilityRole="alert">{page.error}</Text>}
@@ -107,6 +108,7 @@ export function SharedMemory({ social, id, visit, back, backLabel = 'Back to fee
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the previous memory while checking access to the next one.
     setItem(undefined); setFailed(false);
     social.memory(id).then(m => { if (active) setItem(m ?? null); })
       .catch(() => { if (active) setFailed(true); });
@@ -133,7 +135,7 @@ export function People({ social, kind, owner, choose, selected, respond }: {
     return () => clearTimeout(timer);
   }, [term]);
   return <View>
-    {kind !== 'requests' && <TextInput accessibilityLabel="Search people" placeholder="Search by name"
+    {kind !== 'requests' && <TextInput accessibilityLabel="Search people" placeholderTextColor="#676D61" placeholder="Search by name"
       style={styles.input} value={term} onChangeText={setTerm} />}
     <PeopleRows key={kind + owner + query} {...{ social, kind, owner, choose, selected, respond, query }} />
   </View>;
@@ -179,10 +181,9 @@ export function Profile({ social, owner, visit, compose }: {
   const lock = useRef(false);
   useEffect(() => {
     let current = true;
-    setError('');
     social.people('profile', owner).then(rows => {
       if (!rows[0]) throw new Error();
-      if (current) setProfile(rows[0]);
+      if (current) { setError(''); setProfile(rows[0]); }
     }).catch(() => { if (current) { setProfile(null); setError('Could not load this profile.'); } });
     return () => { current = false; };
   }, [social, owner, revision]);
@@ -243,7 +244,7 @@ const styles = StyleSheet.create({
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, action: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: '#DCDDD2', alignSelf: 'flex-start' },
   actionText: { fontSize: 12, color: '#394334', fontWeight: '700' }, primary: { backgroundColor: '#566C43', borderColor: '#566C43' },
   section: { padding: 12, backgroundColor: '#FFFDF9', borderRadius: 12 }, subhead: { fontSize: 19, fontWeight: '800', color: '#30352E', marginVertical: 8 },
-  input: { backgroundColor: 'white', padding: 10, borderColor: '#DBDED3', borderWidth: 1, borderRadius: 8, marginVertical: 8 },
+  input: { color: '#30352E', backgroundColor: 'white', padding: 10, borderColor: '#DBDED3', borderWidth: 1, borderRadius: 8, marginVertical: 8 },
   person: { fontWeight: '700', color: '#30352E' }, row: { flexDirection: 'row', alignItems: 'center', gap: 6, borderBottomColor: '#E8E7DF', borderBottomWidth: 1 },
   print: { padding: 9, paddingBottom: 14, backgroundColor: 'white', borderColor: '#E5E2D9', borderWidth: 1, marginVertical: 8 },
   photo: { width: '100%', aspectRatio: 1.5, backgroundColor: '#EEEDE6' }, caption: { fontSize: 20, color: '#35402D', fontStyle: 'italic', marginTop: 9 },

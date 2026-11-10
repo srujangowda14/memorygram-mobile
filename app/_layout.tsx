@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { AppState, Platform, type AppStateStatus } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 // Keep native token refresh tied to the foreground lifecycle.
@@ -12,7 +12,7 @@ export default function Layout() {
     const auth = supabase.auth;
     // Refresh sessions while the user is active and release the background timer
     // when the OS suspends the app or the root layout is removed.
-    function update(state: AppStateStatus) {
+    function update(state: typeof AppState.currentState) {
       if (state === 'active') void auth.startAutoRefresh();
       else void auth.stopAutoRefresh();
     }

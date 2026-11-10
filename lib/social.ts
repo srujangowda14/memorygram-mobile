@@ -1,3 +1,4 @@
+import { groupRange, type AgeBand } from './quest-age';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { toByteArray } from 'base64-js';
 import { supabase } from './supabase';
@@ -26,6 +27,7 @@ export type Draft = {
 export interface Social {
   me: string;
   preview: boolean;
+  groupRange(ids: string[]): Promise<AgeBand | 'All ages'>;
   spaces: Spaces;
   people(kind: PeopleList, owner: string, search?: string, offset?: number): Promise<Person[]>;
   follow(person: string, action: FollowAction): Promise<void>;
@@ -87,6 +89,11 @@ export function connectedSocial(me: string): Social {
   }
   return {
     me, preview: false, spaces: connectedSpaces(db),
+    async groupRange(ids) {
+      const { data, error } = await db.rpc('group_profile_range', { companions: ids });
+      if (error) throw error;
+      return data;
+    },
     async people(kind, owner, search = '', offset = 0) {
       const { data, error } = await db.rpc('profile_people', {
         kind, owner_id: owner, search_text: search, skip_rows: offset,
@@ -193,6 +200,10 @@ export function previewSocial(): Social {
   }
   return {
     me, preview: true, spaces,
+    async groupRange(ids) {
+      const sample: Record<string,number> = { jamie: 68, sam: 71, alex: 23, riley: 37 };
+      return groupRange([me,...ids].map(id=>sample[id]).join(','), ids.length+1) || 'All ages';
+    },
     async people(kind, owner, search = '', offset = 0) {
       const result = profiles.filter(p => {
         if (!p.display_name.toLowerCase().includes(search.toLowerCase())) return false;

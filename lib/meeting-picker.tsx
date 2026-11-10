@@ -53,9 +53,10 @@ export function MeetingPicker({ preview,mode,ageBand,draftId,selected,choose,dis
   const [searching,setSearching] = useState(false);
   const [offers,setOffers] = useState<Offer[]>();
   const [note,setNote] = useState('');
-  const controller = useRef<AbortController>();
+  const controller = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     const abort = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the directory status when starting a new lookup.
     setLoading(true); setLoadError('');
     meetingSpots(preview,abort.signal).then(rows => { if (!abort.signal.aborted) setSpots(rows); })
       .catch(e => { if (!abort.signal.aborted) setLoadError(e.message || 'The city directory is unavailable.'); })
@@ -98,7 +99,7 @@ export function MeetingPicker({ preview,mode,ageBand,draftId,selected,choose,dis
     {!!loadError && <><Text accessibilityRole="alert">{loadError}</Text><Action label="Retry directory" onPress={() => setRevision(n=>n+1)} /></>}
     {!loading && !loadError && (!spot ? <>
       <TextInput style={s.input} value={term} editable={!disabled} accessibilityLabel="Search meeting spots"
-        placeholder="Search a park, plaza, or street" onChangeText={setTerm} />
+        placeholderTextColor="#676D61" placeholder="Search a park, plaza, or street" onChangeText={setTerm} />
       {matching.map(p => <Pressable key={p.id} accessibilityRole="button" accessibilityLabel={'Meet at '+p.name}
         style={s.row} onPress={() => { clearOffers(); setSpot(p); }}><Ionicons name="location-outline" size={19} color="#536148"/>
         <View style={{flex:1}}><Text style={s.venue}>{p.name}</Text><Text style={s.meta}>{p.address || p.type}</Text></View></Pressable>)}

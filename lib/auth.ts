@@ -1,3 +1,5 @@
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import * as Linking from 'expo-linking';
 import * as Apple from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
@@ -39,7 +41,8 @@ export async function signIn(provider: Provider) {
     return;
   }
 
-  const redirectTo = Platform.OS === 'web' ? window.location.origin + '/auth/callback' : mobileCallback;
+  const redirectTo = Platform.OS === 'web' ? window.location.origin + '/auth/callback' :
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ? Linking.createURL('auth/callback') : mobileCallback;
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider, options: { redirectTo, skipBrowserRedirect: true },
   });

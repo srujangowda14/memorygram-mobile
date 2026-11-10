@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { randomUUID } from 'expo-crypto';
 import { memoryLink } from './memory-links';
@@ -32,6 +33,7 @@ export function useTimeline<T extends Cursor>(fetchPage: (cursor?: Cursor) => Pr
     }
   }, [fetchPage]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Discard the previous timeline while loading the new source.
     setRows([]); setMore(false);
     void load();
     return invalidate;
@@ -101,6 +103,7 @@ export function MemoryActions({ item, social, onActivity }: {
   const [notice, setNotice] = useState('');
   const [copy, setCopy] = useState('');
   const lock = useRef(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Refresh local interaction counts when a new server snapshot arrives.
   useEffect(() => { setActivity(item.activity); }, [item.activity]);
   // Update both the on-screen card and the feed's cached row. Virtualized
   // cards then keep their confirmed counts when scrolled away and back.

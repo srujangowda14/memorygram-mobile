@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { randomUUID } from 'expo-crypto';
 import { Action, People, SharedMemory } from './profile-ui';
@@ -10,7 +11,7 @@ import type { Byline, Reply, Social } from './social';
 import type { Mode, Space, Task } from './memory-spaces';
 import { ListingDetails, MeetingPicker } from './meeting-picker';
 import catalog from './friend-quests.json';
-import { ageBands, groupRange, type AgeBand } from './quest-age';
+import type { AgeBand } from './quest-age';
 import type { Offer } from './nearby';
 
 // Offer two kinds of space before asking for names, people or permissions.
@@ -20,10 +21,20 @@ export function StartMemory({ social, close, open, photo }: {
 }) {
   const [mode, setMode] = useState<Mode>();
   const [name, setName] = useState('');
-  const [preference,setPreference] = useState<AgeBand | 'All ages' | 'Calculate'>('All ages');
-  const [ages,setAges] = useState('');
   const [friends, setFriends] = useState<Byline[]>([]);
-  const range = preference === 'Calculate' ? groupRange(ages,friends.length+1) : preference;
+  const members = JSON.stringify(friends.map(person => person.id).sort());
+  const [lookup, setLookup] = useState<{ members: string; range: AgeBand | 'All ages' }>();
+  const [lookupError, setLookupError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (mode !== 'group' || members === '[]') return;
+    let active = true;
+    social.groupRange(JSON.parse(members)).then(range => {
+      if (active) setLookup({ members, range });
+    }).catch(() => { if (active) setLookupError(members); });
+    return () => { active = false; };
+  }, [members, mode, social, retry]);
+  const range = lookup?.members === members ? lookup.range : undefined;
   const ageBand = mode === 'group' && range !== 'All ages' ? range : undefined;
   const missingAges = mode === 'group' && !range;
   const [place, setPlace] = useState<TaskPlace>({ key: 'anywhere' });
@@ -36,7 +47,7 @@ export function StartMemory({ social, close, open, photo }: {
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const ticket = useRef(0);
-  const request = useRef('');
+  const [draftId] = useState(() => randomUUID());
   useEffect(() => () => { ticket.current++; }, []);
 
   // Invalidate late GPS callbacks when a user skips location or goes back.
@@ -53,16 +64,19 @@ export function StartMemory({ social, close, open, photo }: {
     setLocating(true); setLocationNote('');
     try {
       const place = await suggestContext();
-      if (generation === ticket.current) setPlace(place);
-    } catch {
-      if (generation === ticket.current) setLocationNote('Location is unavailable. You can start with anywhere tasks or try again.');
+      if (generation === ticket.current) {
+        setPlace(place);
+        if (['morning','afternoon','evening'].includes(place.key)) setLocationNote('Location found. No nearby town matched the offline map, so this task uses local time.');
+      }
+    } catch (e) {
+      if (generation === ticket.current) setLocationNote(e instanceof Error ? e.message : 'Location is unavailable. Check location permissions and try again.');
     } finally { if (generation === ticket.current) setLocating(false); }
   }
 
   // Select only people returned by the mutual-friend directory. The creator
   // counts toward the twenty-member cap and is always included by the server.
   function toggle(person: Byline) {
-    setAges(''); setOffer(undefined);
+    setOffer(undefined); setLookup(undefined); setLookupError('');
     if (friends.some(p => p.id === person.id)) setFriends(friends.filter(p => p.id !== person.id));
     else if (friends.length < 19) setFriends([...friends, person]);
     else setError('Choose up to 19 friends.');
@@ -76,8 +90,7 @@ export function StartMemory({ social, close, open, photo }: {
     if (mode === 'group' && !friends.length) { setError('Choose at least one friend.'); return; }
     lock.current = true; setBusy(true); setError(''); ticket.current++; setLocating(false);
     try {
-      request.current ||= randomUUID();
-      const id = await social.spaces.start({ id: request.current, name: name.trim() || (mode === 'solo' ? 'My Pocket Chapter' : 'Our memory group'),
+      const id = await social.spaces.start({ id: draftId, name: name.trim() || (mode === 'solo' ? 'My Pocket Chapter' : 'Our memory group'),
         mode, friends: mode === 'group' ? friends : [], place, offer, ageBand });
       open(id);
     } catch (e) {
@@ -88,10 +101,13 @@ export function StartMemory({ social, close, open, photo }: {
     finally { lock.current = false; setBusy(false); }
   }
   return <Modal visible animationType="slide" onRequestClose={() => { if (!lock.current) close(); }}>
-    <SafeAreaView style={st.screen}><KeyboardAvoidingView style={st.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={st.page}>
-        <View style={st.top}><Text style={st.title}>{!mode ? 'Start a memory' : mode === 'solo' ? 'Pocket Chapter' : 'With others'}</Text>
-          <Action label="Close" disabled={busy} onPress={close} /></View>
+    <SafeAreaProvider style={st.flex}><SafeAreaView style={st.screen}>
+      <View style={st.navigation}><Pressable accessibilityRole="button" accessibilityLabel={mode ? 'Back' : 'Close'}
+        disabled={busy} style={st.back} onPress={() => { if (!mode) return close(); clearLocation(); setMode(undefined); setName(''); setError(''); }}>
+        <Ionicons name="arrow-back" size={25} color="#343832" /></Pressable>
+        <Text style={st.title}>{!mode ? 'Start a memory' : mode === 'solo' ? 'Pocket Chapter' : 'With others'}</Text></View>
+      <KeyboardAvoidingView style={st.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView style={st.flex} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={st.page}>
         {!mode ? <>
           <Text style={st.body}>Who are you making this memory with?</Text>
           <ModeCard mode="solo" onPress={() => setMode('solo')} />
@@ -102,28 +118,25 @@ export function StartMemory({ social, close, open, photo }: {
             'Make a private group with three shared tasks and a chat. Anyone in the group can save a memory for a task.'}</Text>
           <Text style={st.label}>{mode === 'solo' ? 'Chapter name' : 'Group name'} (optional)</Text>
           <TextInput style={st.input} value={name} onChangeText={setName} maxLength={50} editable={!busy}
-            accessibilityLabel="Space name" placeholder={mode === 'solo' ? 'My Pocket Chapter' : 'Our memory group'} />
+            accessibilityLabel="Space name" placeholderTextColor="#676D61" placeholder={mode === 'solo' ? 'My Pocket Chapter' : 'Our memory group'} />
           {mode === 'group' && <View style={st.panel}><Text style={st.heading}>Choose friends</Text>
             <Text style={st.body}>{friends.length ? friends.map(f => f.name).join(' · ') : 'Choose people who follow you back.'}</Text>
             <View pointerEvents={busy ? 'none' : 'auto'}><People kind="friends" social={social} owner={social.me} selected={friends} choose={toggle} /></View>
-            <Text style={st.heading}>Group age range</Text>
-            <View style={st.wrap}>{(['All ages',...ageBands,'Calculate'] as const).map(b =>
-              <Action key={b} label={b} primary={preference===b} disabled={busy} onPress={() => { setPreference(b); setOffer(undefined); }} />)}</View>
-            {preference==='Calculate' && <><Text style={st.body}>Enter one age for each person, including yourself. Only the group range is saved.</Text>
-              <TextInput accessibilityLabel="Group ages" style={st.input} placeholder="For example, 68, 71" value={ages} onChangeText={v=>{setAges(v);setOffer(undefined);}} editable={!busy}/>
-              <Text style={st.meta}>{range ? 'Quest selection · '+range : 'Enter '+(friends.length+1)+' ages separated by commas.'}</Text></>}
+            {!!friends.length && (range ? <Text style={st.meta}>Quest selection · {range}</Text> :
+              lookupError === members ? <Action label="Retry age lookup" onPress={() => { setLookupError(''); setRetry(v=>v+1); }} /> :
+              <Text style={st.meta}>Checking group ages…</Text>)}
           </View>}
           <View style={st.panel}>
-            {choosingSpot ? <><MeetingPicker key={ageBand || 'all'} ageBand={ageBand} preview={social.preview} mode={mode} draftId={request.current}
+            {choosingSpot ? <><MeetingPicker key={ageBand || 'all'} ageBand={ageBand} preview={social.preview} mode={mode} draftId={draftId}
               selected={offer} choose={o => { setOffer(o); setError(''); }} disabled={busy} />
               <Action label="Use anywhere tasks" disabled={busy} onPress={clearLocation} /></> : <>
             <View style={st.inline}><Ionicons name="location-outline" size={19} color="#59694C" /><Text style={st.heading}>{mode==='solo' ? 'Where will you go?' : 'Where will you meet?'}</Text></View>
             <Action label="Choose a meeting spot" disabled={busy} onPress={() => {
-              clearLocation(); request.current ||= randomUUID(); setChoosingSpot(true);
+              clearLocation(); setChoosingSpot(true);
             }} />
-            <Text style={st.body}>{place.key === 'anywhere' ? 'Or use your location once for a curated prompt. Your coordinates stay on this device.' :
+            <Text style={st.body}>{place.key === 'anywhere' ? 'Or use your location once for a curated prompt. Your phone can look up a nearby town. Only the place label is saved.' :
               (mode === 'group' ? 'Your group’s task can mention ' : 'Your task will use ') + areaLabel + '.'}</Text>
-            <View style={st.wrap}>{place.key === 'anywhere' && <Action label={locating ? 'Finding location…' : 'Use my location'}
+            <View style={st.wrap}>{<Action label={locating ? 'Finding location…' : place.key === 'anywhere' ? 'Use my location' : 'Refresh location'}
               disabled={busy || locating} onPress={locate} />}
               {(locating || place.key !== 'anywhere') && <Action label="Use anywhere tasks" disabled={busy} onPress={clearLocation} />}</View>
             {!!locationNote && <Text accessibilityRole="alert" style={st.body}>{locationNote}</Text>}
@@ -132,10 +145,9 @@ export function StartMemory({ social, close, open, photo }: {
           {!!error && <Text accessibilityRole="alert" style={st.error}>{error}</Text>}
           <Action primary label={busy ? 'Creating…' : mode === 'solo' ? 'Start Pocket Chapter' : 'Create group'}
             disabled={busy || missingAges || locating || (choosingSpot && !offer) || (mode === 'group' && !friends.length)} onPress={start} />
-          <Action label="Back" disabled={busy} onPress={() => { clearLocation(); setMode(undefined); setName(''); setError(''); }} />
         </>}
       </ScrollView>
-    </KeyboardAvoidingView></SafeAreaView>
+    </KeyboardAvoidingView></SafeAreaView></SafeAreaProvider>
   </Modal>;
 }
 
@@ -178,15 +190,6 @@ export function SpaceRoom({ social, id, back, visit }: { social: Social; id: str
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const [task, setTask] = useState<Task>();
-  const [editingRange,setEditingRange] = useState(false);
-  // Refresh the persisted collection after a member changes the group range.
-  // A failed write leaves the previous preference and assignments available.
-  async function changeRange(band?:AgeBand) {
-    setAdding(true);setAddError('');
-    try { await social.spaces.setRange(id,band);setEditingRange(false);setLimit(6);setRevision(n=>n+1); }
-    catch {setAddError('Could not change the range. Try again.');}
-    finally {setAdding(false);}
-  }
   const [limit,setLimit] = useState(0);
   const [adding,setAdding] = useState(false);
   const [addError,setAddError] = useState('');
@@ -226,9 +229,7 @@ export function SpaceRoom({ social, id, back, visit }: { social: Social; id: str
           {room.space.mode === 'group' && <Action primary={chat} label="Group chat" onPress={() => setChat(true)} />}</View>
         {chat ? <GroupChat social={social} group={id} /> : <>
           {room.space.mode==='group' && <Action label={limit?'Close quest library':'Browse quests · '+(room.space.ageBand || 'All ages')} onPress={()=>setLimit(limit?0:6)} />}
-           {limit>0 && <View style={st.section}><Action label="Change group age range" disabled={adding} onPress={()=>setEditingRange(v=>!v)}/>
-            {editingRange && <View style={st.wrap}>{(['All ages',...ageBands] as const).map(b=><Action key={b} label={b} disabled={adding}
-              primary={b===(room.space.ageBand || 'All ages')} onPress={()=>changeRange(b==='All ages'?undefined:b)}/>)}</View>}
+           {limit>0 && <View style={st.section}>
             {choices.slice(0,limit).map(q=><View key={q.key} style={st.panel}>
             <Text style={st.heading}>{q.title}</Text><Text style={st.body}>{q.prompt}</Text>
             <Action label={'Assign '+q.title} disabled={adding} onPress={()=>addQuest(q.key)}/></View>)}
@@ -337,7 +338,7 @@ function GroupChat({ social, group }: { social: Social; group: string }) {
     finally { lock.current = false; setSending(false); }
   }
   return <View style={st.section}>
-    <TextInput multiline accessibilityLabel="Group message" placeholder="Message your group…" style={st.input} maxLength={1000}
+    <TextInput multiline accessibilityLabel="Group message" placeholderTextColor="#676D61" placeholder="Message your group…" style={st.input} maxLength={1000}
       editable={!sending} value={draft} onChangeText={v => { request.current = ''; setDraft(v); }} />
     <Action primary label={sending ? 'Sending…' : 'Send message'} disabled={!draft.trim() || sending} onPress={send} />
     {disconnected && <><Text style={st.meta}>Live updates disconnected.</Text>
@@ -353,6 +354,8 @@ function GroupChat({ social, group }: { social: Social; group: string }) {
 }
 
 const st = StyleSheet.create({
+  navigation: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 4 },
+  back: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
   screen: { flex: 1, backgroundColor: '#F9F7F1' }, flex: { flex: 1 },
   page: { width: '100%', maxWidth: 680, alignSelf: 'center', padding: 20, paddingBottom: 44, gap: 14 },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },

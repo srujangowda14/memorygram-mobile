@@ -1,5 +1,7 @@
+import { ProfileSetup } from '@/lib/profile-setup';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { connectedSocial, previewSocial, SAMPLE_IDS } from '@/lib/social';
 import { Action, HomeTimeline, MemoryFeed, Profile, SharedMemory } from '@/lib/profile-ui';
@@ -45,9 +47,10 @@ export default function Home() {
   if (!ready) return <SafeAreaView style={s.safe}><ActivityIndicator accessibilityLabel="Restoring session" /></SafeAreaView>;
   if (!session && !sample && (!preview || sharedId)) return <Welcome memory={sharedId} onPreview={() => setPreview(true)} />;
   const activeSession = sample ? null : session;
-  return <Hangout key={activeSession?.user.id ?? 'preview'} session={activeSession} sharedId={sharedId}
-    clearShared={() => { if (sample && !session) setPreview(true); router.setParams({ memory: '', demo: '' }); }}
+  const home = <Hangout key={activeSession?.user.id ?? 'preview'} session={activeSession} sharedId={sharedId}
+    clearShared={() => { if (sample && !session) setPreview(true); router.replace('/'); }}
     exitPreview={() => { setPreview(false); if (sharedId) router.replace('/'); }} />;
+  return activeSession ? <ProfileSetup key={activeSession.user.id} userId={activeSession.user.id}>{home}</ProfileSetup> : home;
 }
 
 // Show the existing scrapbook experience for the current account or guest.
@@ -98,6 +101,7 @@ function Hangout({ session, exitPreview, sharedId, clearShared }: {
   useEffect(() => {
     if (!accountOpen) return;
     let current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear stale privacy controls while fetching the selected account.
     setPrivateProfile(null); setAccountError('');
     social.people('profile', social.me).then(rows => {
       if (!rows[0]) throw new Error();
@@ -195,12 +199,13 @@ function Welcome({ onPreview, memory }: { onPreview: () => void; memory?: string
   const busy = useRef(false);
   const [pending, setPending] = useState<Provider | null>(null);
   const [message, setMessage] = useState('');
-  const disabled = !supabase || pending !== null;
+  const disabled = pending !== null;
 
   // Serialize button presses so a second login cannot replace the first verifier.
   // Treat device cancellation as a normal return to the welcome screen.
   async function start(provider: Provider) {
-    if (!supabase || busy.current) return;
+    if (!supabase) { setMessage('Sign-in needs the Supabase project URL and public key. Add them to the mobile environment and restart Expo.'); return; }
+    if (busy.current) return;
     busy.current = true;
     setPending(provider);
     setMessage('');
@@ -209,7 +214,7 @@ function Welcome({ onPreview, memory }: { onPreview: () => void; memory?: string
       await signIn(provider);
     } catch (error) {
       if ((error as { code?: string })?.code !== 'ERR_REQUEST_CANCELED') {
-        setMessage('Sign-in could not be completed. Check your connection and try again.');
+        setMessage(error instanceof Error ? error.message : 'Sign-in could not be completed. Check your connection and try again.');
       }
     } finally {
       busy.current = false;

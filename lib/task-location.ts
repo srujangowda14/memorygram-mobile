@@ -51,7 +51,21 @@ export async function suggestContext(): Promise<TaskPlace> {
     return contextForLocation(coords.latitude, coords.longitude, coords.accuracy);
   }
   const permission = await Location.requestForegroundPermissionsAsync();
-  if (!permission.granted) throw new Error('Location unavailable');
-  const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
-  return contextForLocation(coords.latitude, coords.longitude, coords.accuracy);
+  if (!permission.granted) throw new Error('Location is unavailable. Enable location access for this app in Settings, then retry.');
+  if (!await Location.hasServicesEnabledAsync()) throw new Error('Location Services are off. Turn them on in Settings, then retry.');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Location timed out. Move near a window or try again.')), 16000);
+    });
+    const { coords } = await Promise.race([Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }), timeout]);
+    const place = contextForLocation(coords.latitude, coords.longitude, coords.accuracy);
+    if (place.key === 'locality' || ['crissy','mall','cubbon'].includes(place.key)) return place;
+    try {
+      const [address] = await Promise.race([Location.reverseGeocodeAsync(coords), timeout]);
+      const name = (address?.city || address?.district)?.trim();
+      if (name && name.length<=80) return { key:'locality', name };
+    } catch { /* The offline time cue remains available without a city lookup. */ }
+    return place;
+  } finally { clearTimeout(timer); }
 }

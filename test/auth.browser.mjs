@@ -38,6 +38,7 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
       socket.send(JSON.stringify([join, ref, topic, 'phx_reply', { status: 'ok', response }]));
     });
   });
+  let birthday;
   let nearbyDraft;
   const spot = {id:'117',name:'Alamo Square',address:'1081 Fulton St',lat:37.776,lon:-122.435,type:'Park'};
   const offer = {id:mid,title:'Our paper postcard',prompt:'Find a detail for a postcard and write a caption.',
@@ -74,6 +75,14 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
       return route.fulfill({json:{offers:[offer,dining],calendarAvailable:true,restaurantStatus:'found'}});
     }
     if (url.origin !== project) return route.abort();
+    if (url.pathname === '/rest/v1/profile_birthdays') {
+      if (route.request().method()==='POST') {
+        birthday=route.request().postDataJSON().birthday;
+        assert.equal(birthday,'1990-05-21');
+        return route.fulfill({status:201});
+      }
+      return route.fulfill({json:birthday ? [{birthday}] : []});
+    }
     if (url.pathname === '/rest/v1/rpc/start_nearby_memory_space') {
       assert.deepEqual(route.request().postDataJSON(),{gid:nearbyDraft,mode:'solo',space_name:'My Pocket Chapter',companions:[],offer_id:dining.id});
       return route.fulfill({json:nearbyDraft});
@@ -168,6 +177,8 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
   await page.goto(app + '/?memory=' + mid);
   await page.getByText('Sign in to view this memory').waitFor();
   await page.getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByLabel('Birthday').fill('1990-05-21');
+  await page.getByRole('button',{name:'Save profile'}).click();
   await page.getByText('Shared memory', { exact: true }).waitFor();
   await page.getByText('Their rooftop picnic').waitFor();
   await page.getByRole('button', { name: 'Back to feed' }).click();
@@ -192,6 +203,7 @@ test('preview, provider callbacks, persisted session and sign-out', async t => {
   await page.goto(app + '/?memory=11111111-1111-4111-8111-111111111111');
   await page.getByText('This memory is unavailable to this account.').waitFor();
   await page.getByRole('button', { name: 'Back to feed' }).click();
+  await page.waitForURL(app + '/');
   await page.reload();
   await page.getByRole('button', { name: 'Unlike memory' }).click();
   await page.getByRole('button', { name: 'Like memory', exact: true }).waitFor();
@@ -290,12 +302,22 @@ async function checkMemorySpaces(page) {
   await page.context().setGeolocation({ latitude: 48.86, longitude: 2.33, accuracy: 100 });
   await button('Start a memory').click();
   await button('With others').click();
+  const desktopSize = page.viewportSize();
+  await page.setViewportSize({width:375,height:600});
+  const backBefore = await button('Back').boundingBox();
+  await button('Create group').scrollIntoViewIfNeeded();
+  const bottom = await button('Create group').boundingBox();
+  assert.ok(bottom.y >= 0 && bottom.y + bottom.height <= 601);
+  assert.ok(Math.abs((await button('Back').boundingBox()).y - backBefore.y) < 2);
+  await page.getByLabel('Space name').scrollIntoViewIfNeeded();
+  await button('Back').click();
+  await button('With others').click();
+  await page.setViewportSize(desktopSize);
   assert.equal(await button('Create group').isDisabled(), true);
   await page.getByRole('checkbox', { name: /Sam Rivera/ }).click();
-  await button('Calculate').click();
-  await page.getByLabel('Group ages').fill('23, 71');
+  await page.getByRole('checkbox', { name: /Alex Chen/ }).click();
   await page.getByText('Quest selection · All ages').waitFor();
-  await page.getByLabel('Group ages').fill('68, 71');
+  await page.getByRole('checkbox', { name: /Alex Chen/ }).click();
   await page.getByText('Quest selection · 65+').waitFor();
   await page.getByLabel('Space name').fill('Sunday breakfast');
   await button('Use my location').click();
@@ -330,9 +352,6 @@ async function checkMemorySpaces(page) {
   await page.getByRole('button',{name:/^Assign /}).first().click();
   await page.getByText('1 of 4 memories saved').waitFor();
   await button('Browse quests · 65+').click();
-  await button('Change group age range').click();
-  await button('Under 30').click();
-  await button('Assign Group chat patch notes').waitFor();
   await button('Group chat').click();
   await page.getByText('Which leaf did you pick?', { exact: true }).waitFor();
   await button('The hangout').click();

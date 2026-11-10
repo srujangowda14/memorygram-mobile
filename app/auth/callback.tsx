@@ -11,10 +11,7 @@ export default function Callback() {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
-    if (error || typeof code !== 'string') {
-      setFailed(true);
-      return;
-    }
+    if (error || typeof code !== 'string') return;
     completeOAuth(code, typeof flowId === 'string' ? flowId : undefined)
       .then(async () => {
         if (!active) return;
@@ -25,7 +22,7 @@ export default function Callback() {
     return () => { active = false; };
   }, [code, error, flowId]);
   return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}>
-    {failed ? <>
+    {failed || error || typeof code !== 'string' ? <>
       <Text>Sign-in could not be completed.</Text>
       <Button title="Back to Memorygram" onPress={() => router.replace('/')} />
     </> : <ActivityIndicator accessibilityLabel="Finishing sign-in" />}
