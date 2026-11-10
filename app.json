@@ -4,7 +4,16 @@
     "version": "1.0.0", "orientation": "portrait",
     "ios": { "supportsTablet": true, "bundleIdentifier": "com.memorygram.app", "usesAppleSignIn": true },
     "android": { "package": "com.memorygram.app", "adaptiveIcon": { "backgroundColor": "#F9F7F1" } },
-    "plugins": ["expo-router", "expo-image-picker", "expo-apple-authentication"],
+    "plugins": ["expo-router", "expo-image-picker", "expo-apple-authentication",
+      ["expo-location", {
+        "locationWhenInUsePermission": "Allow Memorygram to use your location once to suggest a memory task for this area.",
+        "locationAlwaysAndWhenInUsePermission": false,
+        "locationAlwaysPermission": false,
+        "isIosBackgroundLocationEnabled": false,
+        "isAndroidBackgroundLocationEnabled": false,
+        "isAndroidForegroundServiceEnabled": false
+      }]
+    ],
     "experiments": { "typedRoutes": true }
   }
 }

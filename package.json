@@ -9,7 +9,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app lib",
-    "test:auth": "EXPO_NO_DOTENV=1 EXPO_PUBLIC_SUPABASE_URL=https://fixture.supabase.test EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=public-fixture expo export --clear --platform web --output-dir .expo/auth-test && node --test test/auth.browser.mjs"
+    "test:auth": "EXPO_NO_DOTENV=1 EXPO_PUBLIC_SUPABASE_URL=https://fixture.supabase.test EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=public-fixture EXPO_PUBLIC_SERVICE_URL=https://api.memorygram.test expo export --clear --platform web --output-dir .expo/auth-test && node --test test/auth.browser.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",
@@ -26,6 +26,7 @@
     "expo-font": "~13.0.4",
     "expo-image-picker": "~16.0.6",
     "expo-linking": "~7.0.3",
+    "expo-location": "~18.0.10",
     "expo-router": "~4.0.17",
     "expo-status-bar": "~2.0.1",
     "expo-web-browser": "~14.0.1",

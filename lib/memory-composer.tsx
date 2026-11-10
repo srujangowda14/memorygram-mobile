@@ -4,11 +4,13 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Crypto from 'expo-crypto';
 import { Action, People } from './profile-ui';
 import type { Byline, Social } from './social';
+import type { Space } from './memory-spaces';
 
 // Build one photo-backed memory for the author and the friends selected here.
 // Keep the draft and photo ID on failure so retrying cannot duplicate the post.
-export function MemoryComposer({ social, title, prompt, onClose, onPosted }: {
+export function MemoryComposer({ social, title, prompt, assignment, onClose, onPosted }: {
   social: Social; title: string; prompt?: string; onClose: () => void; onPosted: () => void;
+  assignment?: { space: Space; taskId: string };
 }) {
   const [caption, setCaption] = useState('');
   const [group, setGroup] = useState('');
@@ -51,6 +53,7 @@ export function MemoryComposer({ social, title, prompt, onClose, onPosted }: {
     lock.current = true; setBusy(true); setError('');
     try {
       await social.publish({ id: photo.id, asset: photo.asset, caption: caption.trim(), people,
+        assignment: assignment && { groupId: assignment.space.id, taskId: assignment.taskId },
         group: people.length ? group.trim() || 'Memory group' : 'Solo memory', quest: title });
       onPosted();
     } catch (reason) {
@@ -66,6 +69,8 @@ export function MemoryComposer({ social, title, prompt, onClose, onPosted }: {
         <Action label={photo ? 'Change photo' : 'Add photo proof'} onPress={choosePhoto} disabled={busy} />
         <Text style={styles.label}>Caption</Text><TextInput multiline accessibilityLabel="Memory caption" editable={!busy}
           style={styles.input} maxLength={220} placeholder="What happened?" value={caption} onChangeText={setCaption} />
+        {assignment ? <Text style={styles.note}>{assignment.space.mode === 'solo' ? 'Only you can see this memory.' :
+          'Only the members of ' + assignment.space.name + ' can see this memory.'}</Text> : <>
         <Text style={styles.label}>Who was there?</Text>
         <Text style={styles.note}>{['You', ...people.map(p => p.name)].join(' · ')}</Text>
         <Action label={picking ? 'Done choosing' : 'Choose friends'} disabled={busy} onPress={() => setPicking(!picking)} />
@@ -75,9 +80,9 @@ export function MemoryComposer({ social, title, prompt, onClose, onPosted }: {
           <TextInput style={styles.input} maxLength={50} editable={!busy} accessibilityLabel="Group name" placeholder="Friday crew"
             value={group} onChangeText={setGroup} />
           <Text style={styles.note}>This memory will appear on all {people.length + 1} profiles. Outside the group, viewers need access to every private profile involved.</Text>
-        </>}
+        </>}</>}
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
-        <Action primary label={busy ? 'Posting…' : 'Post memory'} disabled={busy} onPress={post} />
+        <Action primary label={busy ? 'Saving…' : assignment ? 'Save memory' : 'Post memory'} disabled={busy} onPress={post} />
       </ScrollView>
     </KeyboardAvoidingView>
   </Modal>;

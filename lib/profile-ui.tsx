@@ -99,8 +99,8 @@ export function HomeTimeline({ social, visit, compose, footer }: {
 
 // Re-fetch a shared post under the recipient's own session. Hidden and missing
 // posts receive the same response and expose no caption, image or byline.
-export function SharedMemory({ social, id, visit, back }: {
-  social: Social; id: string; visit: (id: string) => void; back: () => void;
+export function SharedMemory({ social, id, visit, back, backLabel = 'Back to feed' }: {
+  social: Social; id: string; visit: (id: string) => void; back: () => void; backLabel?: string;
 }) {
   const [item, setItem] = useState<Memory | null>();
   const [failed, setFailed] = useState(false);
@@ -112,7 +112,7 @@ export function SharedMemory({ social, id, visit, back }: {
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [social, id, retry]);
-  return <ScrollView contentContainerStyle={styles.page}><Action label="Back to feed" onPress={back} />
+  return <ScrollView contentContainerStyle={styles.page}><Action label={backLabel} onPress={back} />
     <Text style={styles.heading}>Shared memory</Text>
     {failed ? <><Text>Could not load this memory.</Text><Action label="Retry" onPress={() => setRetry(v => v + 1)} /></>
       : item === undefined ? <ActivityIndicator /> : item === null ? <Text>This memory is unavailable to this account.</Text>

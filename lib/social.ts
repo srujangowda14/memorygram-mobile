@@ -1,6 +1,7 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { toByteArray } from 'base64-js';
 import { supabase } from './supabase';
+import { connectedSpaces, previewSpaces, type Spaces } from './memory-spaces';
 
 export type Person = {
   id: string; display_name: string; is_private: boolean; followers: number;
@@ -20,10 +21,12 @@ export const SAMPLE_IDS = [
 ];
 export type Draft = {
   id: string; caption: string; quest: string; asset: ImagePickerAsset; group: string; people: Byline[];
+  assignment?: { groupId: string; taskId: string };
 };
 export interface Social {
   me: string;
   preview: boolean;
+  spaces: Spaces;
   people(kind: PeopleList, owner: string, search?: string, offset?: number): Promise<Person[]>;
   follow(person: string, action: FollowAction): Promise<void>;
   privacy(privateProfile: boolean): Promise<void>;
@@ -83,7 +86,7 @@ export function connectedSocial(me: string): Social {
     });
   }
   return {
-    me, preview: false,
+    me, preview: false, spaces: connectedSpaces(db),
     async people(kind, owner, search = '', offset = 0) {
       const { data, error } = await db.rpc('profile_people', {
         kind, owner_id: owner, search_text: search, skip_rows: offset,
@@ -134,11 +137,13 @@ export function connectedSocial(me: string): Social {
       // The object key is unique to both the current user and this specific photo.
       if (uploaded.error && !/already exists|duplicate/i.test(uploaded.error.message)
           && uploaded.error.statusCode !== '409') throw uploaded.error;
-      const { error } = await db.rpc('publish_memory', {
+      const { error } = draft.assignment ? await db.rpc('finish_memory_task', {
+        task: draft.assignment.taskId, mid: draft.id, caption_text: draft.caption,
+      }) : await db.rpc('publish_memory', {
         mid: draft.id, caption_text: draft.caption, quest_name: draft.quest,
         group_name: draft.group, companions: draft.people.map(p => p.id),
       });
-      if (error) throw error;
+      if (error) throw new Error(error.message);
     },
   };
 }
@@ -157,7 +162,8 @@ export function previewSocial(): Social {
     ['jamie:alex', 'accepted'], ['alex:jamie', 'accepted'], ['jamie:sam', 'accepted'],
     ['sam:jamie', 'accepted'], ['riley:jamie', 'pending'],
   ]);
-  const memories: Omit<Memory,'activity'>[] = [
+  const spaces = previewSpaces({ id: me, name: 'Jamie Davis' });
+  const memories: (Omit<Memory,'activity'> & { spaceOnly?: boolean })[] = [
     { id: SAMPLE_IDS[2], caption: 'The coin picked the bakery.', quest: 'Take the scenic wrong turn',
       people: [{ id: 'alex', name: 'Alex Chen' }, { id: 'riley', name: 'Riley Park' }],
       image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=700', created: '2026-11-01' },
@@ -186,7 +192,7 @@ export function previewSocial(): Social {
     return rows.slice(start, start + PAGE_SIZE);
   }
   return {
-    me, preview: true,
+    me, preview: true, spaces,
     async people(kind, owner, search = '', offset = 0) {
       const result = profiles.filter(p => {
         if (!p.display_name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -222,7 +228,7 @@ export function previewSocial(): Social {
     async memories(owner, offset = 0) {
       return visible().filter(m => m.people.some(p => p.id === owner)).slice(offset, offset + PAGE_SIZE);
     },
-    async feed(before) { return page(visible(), before); },
+    async feed(before) { return page(visible().filter(m => !m.spaceOnly), before); },
     async memory(id) { return visible().find(m => m.id === id); },
     async like(id, wanted) {
       if (!visible().some(m => m.id === id)) throw new Error('Unavailable');
@@ -241,9 +247,10 @@ export function previewSocial(): Social {
       return activity(id);
     },
     async publish(draft) {
+      const space = draft.assignment && spaces.complete(draft.assignment.groupId, draft.assignment.taskId, draft.id);
       if (!memories.some(m => m.id === draft.id)) memories.unshift({
-        id: draft.id, caption: draft.caption, image: draft.asset.uri, quest: draft.quest, group: draft.group, created: new Date().toISOString(),
-        people: [{ id: me, name: 'Jamie Davis' }, ...draft.people],
+        id: draft.id, caption: draft.caption, image: draft.asset.uri, quest: draft.quest, group: space?.name ?? draft.group, created: new Date().toISOString(),
+        spaceOnly: !!space, people: space?.people ?? [{ id: me, name: 'Jamie Davis' }, ...draft.people],
       });
     },
   };

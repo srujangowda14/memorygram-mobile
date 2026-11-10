@@ -1,0 +1,14 @@
+[
+  {"id": "117", "name": "Alamo Square", "address": "1081 Fulton St", "lat": 37.77634695, "lon": -122.43468604, "type": "Neighborhood park"},
+  {"id": "129", "name": "Alta Plaza Park", "address": "2501 Jackson St", "lat": 37.79117837, "lon": -122.43768317, "type": "Neighborhood park"},
+  {"id": "81", "name": "Buena Vista Park", "address": "1293 Haight St", "lat": 37.76856416, "lon": -122.44139746, "type": "Park"},
+  {"id": "164", "name": "Crocker Amazon Playground", "address": "799 Moscow St", "lat": 37.7140419, "lon": -122.42928813, "type": "Park"},
+  {"id": "113", "name": "Duboce Park", "address": "50 Scott St", "lat": 37.76961523, "lon": -122.43345618, "type": "Neighborhood park"},
+  {"id": "1", "name": "Glen Canyon Park", "address": "70 Elk St", "lat": 37.74017042, "lon": -122.44268074, "type": "Park"},
+  {"id": "125", "name": "Hamilton Rec Center", "address": "1900 Geary Blvd", "lat": 37.78442364, "lon": -122.43601635, "type": "Neighborhood park"},
+  {"id": "128", "name": "Lafayette Park", "address": "2101 Washington St", "lat": 37.79155487, "lon": -122.42768677, "type": "Neighborhood park"},
+  {"id": "10", "name": "Lake Merced Park", "address": "1 Harding Rd", "lat": 37.7218412, "lon": -122.49239057, "type": "Park"},
+  {"id": "63", "name": "Mission Dolores Park", "address": "646 Dolores St", "lat": 37.75975462, "lon": -122.42712797, "type": "Neighborhood park"},
+  {"id": "100", "name": "Richmond Playground", "address": "149 18th Ave", "lat": 37.78513522, "lon": -122.4781249, "type": "Neighborhood park"},
+  {"id": "135", "name": "Union Square", "address": "333 Post St", "lat": 37.78793628, "lon": -122.40751369, "type": "Plaza"}
+]

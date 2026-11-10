@@ -9,6 +9,7 @@ const authConfig = [
   process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
   process.env.EXPO_PUBLIC_APP_ORIGIN,
+  process.env.EXPO_PUBLIC_SERVICE_URL,
 ];
 config.cacheVersion += createHash('sha256').update(JSON.stringify(authConfig)).digest('hex');
 module.exports = config;
